@@ -1,0 +1,20 @@
+{
+  "name": "live-commerce-mobile",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:server": "npm --workspace server run dev",
+    "dev:admin": "npm --workspace admin run dev",
+    "dev:mobile": "npm --workspace mobile run start",
+    "build": "npm --workspaces --if-present run build",
+    "seed": "npm --workspace server run seed",
+    "prisma:migrate": "npm --workspace server run prisma:migrate"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3"
+  }
+}

@@ -1,0 +1,199 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String   @id @default(cuid())
+  username       String?  @unique
+  nickname       String
+  avatarUrl      String?
+  bio            String?
+  homepageTitle  String?
+  phone          String?  @unique
+  followerCount  Int      @default(0)
+  followingCount Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  cartItems      CartItem[]
+  orders         Order[]
+  comments       Comment[]
+  videos         Video[]
+  liveRooms      LiveRoom[]
+  products       Product[]     @relation("SellerProducts")
+  interactions   Interaction[]
+}
+
+model Product {
+  id          String        @id @default(cuid())
+  title       String
+  coverUrl    String
+  price       Int
+  originPrice Int?
+  stock       Int
+  sales       Int           @default(0)
+  status      String        @default("ON_SALE")
+  category    String?
+  tags        String?
+  description String?
+  sellerId    String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  seller      User?         @relation("SellerProducts", fields: [sellerId], references: [id])
+  videoLinks  VideoProduct[]
+  liveLinks   LiveRoomProduct[]
+  cartItems   CartItem[]
+  orderItems  OrderItem[]
+}
+
+model Video {
+  id           String      @id @default(cuid())
+  title        String
+  coverUrl     String
+  videoUrl     String
+  authorName   String
+  authorAvatar String?
+  userId       String?
+  status       String      @default("DRAFT")
+  playCount    Int         @default(0)
+  likeCount    Int         @default(0)
+  commentCount Int         @default(0)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  author       User?       @relation(fields: [userId], references: [id])
+  products     VideoProduct[]
+  comments     Comment[]
+}
+
+model VideoProduct {
+  id        String  @id @default(cuid())
+  videoId   String
+  productId String
+  sort      Int     @default(0)
+  startTime Int?
+
+  video     Video   @relation(fields: [videoId], references: [id])
+  product   Product @relation(fields: [productId], references: [id])
+
+  @@unique([videoId, productId])
+}
+
+model LiveRoom {
+  id               String         @id @default(cuid())
+  title            String
+  coverUrl          String
+  videoUrl          String?
+  anchorName        String
+  anchorAvatar      String?
+  anchorUserId      String?
+  status            String         @default("NOT_STARTED")
+  onlineCount       Int            @default(0)
+  heat              Int            @default(0)
+  currentProductId  String?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  anchor            User?          @relation(fields: [anchorUserId], references: [id])
+  products          LiveRoomProduct[]
+  comments          Comment[]
+}
+
+model LiveRoomProduct {
+  id         String   @id @default(cuid())
+  liveRoomId String
+  productId  String
+  sort       Int      @default(0)
+
+  liveRoom   LiveRoom @relation(fields: [liveRoomId], references: [id])
+  product    Product  @relation(fields: [productId], references: [id])
+
+  @@unique([liveRoomId, productId])
+}
+
+model CartItem {
+  id        String   @id @default(cuid())
+  userId    String
+  productId String
+  quantity  Int      @default(1)
+  selected  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User     @relation(fields: [userId], references: [id])
+  product   Product  @relation(fields: [productId], references: [id])
+
+  @@unique([userId, productId])
+}
+
+model Order {
+  id             String      @id @default(cuid())
+  orderNo        String      @unique
+  userId         String
+  status         String      @default("PENDING_PAYMENT")
+  totalAmount    Int
+  discountAmount Int         @default(0)
+  payAmount      Int
+  address        String
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  user           User        @relation(fields: [userId], references: [id])
+  items          OrderItem[]
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  orderId   String
+  productId String
+  title     String
+  coverUrl  String
+  price     Int
+  quantity  Int
+
+  order     Order   @relation(fields: [orderId], references: [id])
+  product   Product @relation(fields: [productId], references: [id])
+}
+
+model Comment {
+  id         String   @id @default(cuid())
+  userId     String
+  videoId    String?
+  liveRoomId String?
+  content    String
+  createdAt  DateTime @default(now())
+
+  user       User      @relation(fields: [userId], references: [id])
+  video      Video?    @relation(fields: [videoId], references: [id])
+  liveRoom   LiveRoom? @relation(fields: [liveRoomId], references: [id])
+}
+
+model Interaction {
+  id         String   @id @default(cuid())
+  userId     String
+  targetType String
+  targetId   String
+  type       String
+  createdAt  DateTime @default(now())
+
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, targetType, targetId, type])
+  @@index([targetType, targetId, type])
+}
+
+model Coupon {
+  id        String       @id @default(cuid())
+  title     String
+  amount    Int
+  minAmount Int          @default(0)
+  status    String       @default("ACTIVE")
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+}

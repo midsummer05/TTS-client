@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "Live Commerce",
+    "slug": "live-commerce",
+    "scheme": "livecommerce",
+    "plugins": ["expo-router"],
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic"
+  }
+}
