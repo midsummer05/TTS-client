@@ -10,7 +10,7 @@ import { toMediaUrl } from '@/api/request'
 import type { Product, VideoItem } from '@/types'
 import { formatPrice } from '@/utils/formatPrice'
 
-export function FeedItem({ item, active, onProductPress, onCartPress, onLivePress }: { item: VideoItem; active: boolean; onProductPress: (product: Product) => void; onCartPress: () => void; onLivePress?: () => void }) {
+export function FeedItem({ item, active, screenFocused, muted, onToggleMute, onProductPress, onCartPress, onLivePress }: { item: VideoItem; active: boolean; screenFocused: boolean; muted: boolean; onToggleMute: () => void; onProductPress: (product: Product) => void; onCartPress: () => void; onLivePress?: () => void }) {
   const product = item.products[0]
   const { width: screenWidth, height: screenHeight } = useWindowDimensions()
   const videoRef = useRef<Video>(null)
@@ -20,30 +20,34 @@ export function FeedItem({ item, active, onProductPress, onCartPress, onLivePres
   const [commentsVisible, setCommentsVisible] = useState(false)
   const [shareVisible, setShareVisible] = useState(false)
   const [paused, setPaused] = useState(false)
-  const [muted, setMuted] = useState(false)
+  const [isPlaying, setIsPlaying] = useState(false)
   const [positionMillis, setPositionMillis] = useState(0)
   const [durationMillis, setDurationMillis] = useState(0)
   const [videoAspect, setVideoAspect] = useState(9 / 16)
+  const readyRef = useRef(false)
 
   useEffect(() => {
     const player = videoRef.current
-    if (!player) return
-    if (active && !paused) {
+    if (!player || !readyRef.current) return
+    if (active && !paused && screenFocused) {
       player.playAsync().catch(() => null)
     } else {
       player.pauseAsync().catch(() => null)
     }
-  }, [active, paused])
+  }, [active, paused, screenFocused])
 
   useEffect(() => {
     if (!active) setPaused(false)
   }, [active])
 
   async function togglePaused() {
-    const next = !paused
-    setPaused(next)
-    if (next) await videoRef.current?.pauseAsync().catch(() => null)
-    else await videoRef.current?.playAsync().catch(() => null)
+    if (isPlaying) {
+      setPaused(true)
+      await videoRef.current?.pauseAsync().catch(() => null)
+    } else {
+      setPaused(false)
+      await videoRef.current?.playAsync().catch(() => null)
+    }
   }
 
   const progress = durationMillis > 0 ? Math.min(positionMillis / durationMillis, 1) : 0
@@ -66,12 +70,12 @@ export function FeedItem({ item, active, onProductPress, onCartPress, onLivePres
         source={{ uri: toMediaUrl(item.videoUrl) }}
         posterSource={{ uri: toMediaUrl(item.coverUrl) }}
         usePoster
-        shouldPlay={active && !paused}
         isMuted={muted}
         isLooping
         resizeMode={ResizeMode.CONTAIN}
         onPlaybackStatusUpdate={(status) => {
           if (!status.isLoaded) return
+          setIsPlaying(!!status.isPlaying)
           setPositionMillis(status.positionMillis || 0)
           setDurationMillis(status.durationMillis || 0)
         }}
@@ -82,6 +86,8 @@ export function FeedItem({ item, active, onProductPress, onCartPress, onLivePres
           if (naturalWidth && naturalHeight && naturalWidth > 0 && naturalHeight > 0) {
             setVideoAspect(naturalWidth / naturalHeight)
           }
+          readyRef.current = true
+          if (active && !paused && screenFocused) videoRef.current?.playAsync().catch(() => null)
         }}
         style={videoBoxStyle}
         videoStyle={Platform.OS === 'web' ? ({ objectPosition: 'center center' } as never) : undefined}
@@ -113,9 +119,9 @@ export function FeedItem({ item, active, onProductPress, onCartPress, onLivePres
         </View>
         <View style={{ flexDirection: 'row', gap: 10 }}>
           <TouchableOpacity onPress={togglePaused} style={{ height: 38, paddingHorizontal: 14, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
-            <Text style={{ color: '#fff', fontWeight: '900' }}>{paused ? '播放' : '暂停'}</Text>
+            <Text style={{ color: '#fff', fontWeight: '900' }}>{isPlaying ? '暂停播放' : '继续播放'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => setMuted((value) => !value)} style={{ height: 38, paddingHorizontal: 14, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
+          <TouchableOpacity onPress={onToggleMute} style={{ height: 38, paddingHorizontal: 14, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
             <Text style={{ color: '#fff', fontWeight: '900' }}>{muted ? '取消静音' : '静音'}</Text>
           </TouchableOpacity>
         </View>

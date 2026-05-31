@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { router } from 'expo-router'
+import { router, useFocusEffect } from 'expo-router'
+import { useCallback } from 'react'
 import { useRef, useState } from 'react'
 import { Alert, Dimensions, FlatList, Platform, ScrollView, ViewToken } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
@@ -16,6 +17,15 @@ const height = Dimensions.get('window').height
 export default function FeedScreen() {
   const [activeIndex, setActiveIndex] = useState(0)
   const [selectedProduct, setSelectedProduct] = useState<Product>()
+  const [muted, setMuted] = useState(false)
+  const [screenFocused, setScreenFocused] = useState(true)
+
+  useFocusEffect(
+    useCallback(() => {
+      setScreenFocused(true)
+      return () => setScreenFocused(false)
+    }, [])
+  )
   const session = useUserStore()
   const query = useQuery({ queryKey: ['videos'], queryFn: () => api.videos() })
   const liveRooms = useQuery({ queryKey: ['live-rooms'], queryFn: () => api.liveRooms() })
@@ -70,6 +80,9 @@ export default function FeedScreen() {
               key={item.id}
               item={item}
               active={index === activeIndex}
+              screenFocused={screenFocused}
+              muted={muted}
+              onToggleMute={() => setMuted((v) => !v)}
               onProductPress={setSelectedProduct}
               onCartPress={() => router.push('/cart')}
               onLivePress={liveRoomIdFor(item) ? () => router.push({ pathname: '/live/[id]', params: { id: liveRoomIdFor(item)! } }) : undefined}
@@ -91,6 +104,9 @@ export default function FeedScreen() {
             <FeedItem
               item={item}
               active={index === activeIndex}
+              screenFocused={screenFocused}
+              muted={muted}
+              onToggleMute={() => setMuted((v) => !v)}
               onProductPress={setSelectedProduct}
               onCartPress={() => router.push('/cart')}
               onLivePress={liveRoomIdFor(item) ? () => router.push({ pathname: '/live/[id]', params: { id: liveRoomIdFor(item)! } }) : undefined}
