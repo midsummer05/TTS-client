@@ -17,9 +17,29 @@ export default function PayResultScreen() {
   }, [id])
 
   return (
-    <SafeAreaView style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff', padding: 20 }}>
-      <Text style={{ fontSize: 28, fontWeight: '800' }}>{pay.isPending || !pay.data ? '支付中...' : '支付成功'}</Text>
-      <TouchableOpacity onPress={() => router.replace('/order')} style={{ marginTop: 28, height: 48, paddingHorizontal: 24, borderRadius: 8, backgroundColor: '#111', justifyContent: 'center' }}>
+    <SafeAreaView
+      style={{
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#fff',
+        padding: 20,
+      }}
+    >
+      <Text style={{ fontSize: 28, fontWeight: '800' }}>
+        {pay.isPending || !pay.data ? '支付中...' : '支付成功'}
+      </Text>
+      <TouchableOpacity
+        onPress={() => router.replace('/order')}
+        style={{
+          marginTop: 28,
+          height: 48,
+          paddingHorizontal: 24,
+          borderRadius: 8,
+          backgroundColor: '#111',
+          justifyContent: 'center',
+        }}
+      >
         <Text style={{ color: '#fff', fontWeight: '800' }}>查看订单</Text>
       </TouchableOpacity>
     </SafeAreaView>

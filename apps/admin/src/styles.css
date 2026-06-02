@@ -39,3 +39,14 @@ body {
   justify-content: flex-end;
   margin-bottom: 12px;
 }
+
+/* AI 流式输出光标闪烁 */
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0;
+  }
+}

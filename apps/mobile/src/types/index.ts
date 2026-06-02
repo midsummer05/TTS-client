@@ -83,5 +83,11 @@ export type Order = {
   discountAmount: number
   payAmount: number
   address: string
-  items: Array<{ id: string; title: string; coverUrl: string; price: number; quantity: number }>
+  items: Array<{
+    id: string
+    title: string
+    coverUrl: string
+    price: number
+    quantity: number
+  }>
 }

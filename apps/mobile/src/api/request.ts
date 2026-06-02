@@ -2,16 +2,16 @@ import axios from 'axios'
 import { Platform } from 'react-native'
 import { useUserStore } from '@/store/userStore'
 
-const webHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost'
+const webHost =
+  typeof window !== 'undefined' ? window.location.hostname : 'localhost'
 
 const envApiUrl = process.env.EXPO_PUBLIC_API_URL as string | undefined
 
-export const API_BASE_URL =
-  envApiUrl
-    ? envApiUrl
-    : Platform.OS === 'web'
-      ? `http://${webHost}:4000`
-      : 'http://10.135.7.67:4000'
+export const API_BASE_URL = envApiUrl
+  ? envApiUrl
+  : Platform.OS === 'web'
+    ? `http://${webHost}:4000`
+    : 'http://10.135.7.67:4000'
 
 export function toMediaUrl(url?: string | null) {
   if (!url) return ''
@@ -58,6 +58,8 @@ request.interceptors.response.use(
       originalRequest.headers.Authorization = `Bearer ${token}`
       return request(originalRequest)
     }
-    throw new Error(error.response?.data?.message || error.message || '请求失败')
+    throw new Error(
+      error.response?.data?.message || error.message || '请求失败',
+    )
   },
 )

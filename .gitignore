@@ -21,3 +21,5 @@ expo-*-headers.txt
 expo-go*.svg
 mobile-simulator.html
 web-bundle-*.txt
+test/
+课题要求.md

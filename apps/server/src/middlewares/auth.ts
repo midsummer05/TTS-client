@@ -12,7 +12,10 @@ export function auth(req: AuthedRequest, res: Response, next: NextFunction) {
 
   try {
     const token = header.replace('Bearer ', '')
-    const payload = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret') as { userId: string }
+    const payload = jwt.verify(
+      token,
+      process.env.JWT_SECRET || 'dev-secret',
+    ) as { userId: string }
     req.userId = payload.userId
     next()
   } catch {
