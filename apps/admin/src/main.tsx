@@ -201,6 +201,7 @@ function AIGenerateModal({
   React.useEffect(() => {
     if (open && !prevOpen.current) {
       prevOpen.current = true
+      setGenType(initialType)
       startGenerate()
     }
     if (!open) {
@@ -529,13 +530,16 @@ function ProductList() {
         onClose={() => setAiOpen(false)}
         product={aiProduct}
         initialType={aiType}
-        onFill={(text) => {
-          // 找到编辑弹窗并填入描述字段
-          const currentDesc = form.getFieldValue('description') || ''
-          form.setFieldsValue({
-            description: currentDesc ? currentDesc + '\n\n' + text : text,
-          })
-          message.success('已填入描述')
+        onFill={async (text) => {
+          try {
+            const currentDesc = aiProduct.description || ''
+            const newDesc = currentDesc ? currentDesc + '\n\n' + text : text
+            await request.patch(`/admin/products/${aiProduct.id}`, { description: newDesc })
+            message.success('已填入描述并保存')
+            queryClient.invalidateQueries({ queryKey: ['admin-products'] })
+          } catch {
+            message.error('保存失败')
+          }
         }}
       />
     </>
