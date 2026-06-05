@@ -12,7 +12,8 @@
     "dev:mobile": "npm --workspace mobile run start",
     "build": "npm --workspaces --if-present run build",
     "seed": "npm --workspace server run seed",
-    "prisma:migrate": "npm --workspace server run prisma:migrate"
+    "prisma:migrate": "npm --workspace server run prisma:migrate",
+    "format": "prettier --write ."
   },
   "devDependencies": {
     "prettier": "^3.3.3"

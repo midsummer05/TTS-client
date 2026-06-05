@@ -16,8 +16,12 @@ export function attachLiveSocket(server: HttpServer) {
       roomUsers.set(liveRoomId, users)
       const onlineCount = users.size + 1200
       const heat = onlineCount * 7
-      await prisma.liveRoom.update({ where: { id: liveRoomId }, data: { onlineCount, heat } }).catch(() => null)
-      liveIo.to(liveRoomId).emit('live:online:update', { liveRoomId, onlineCount, heat })
+      await prisma.liveRoom
+        .update({ where: { id: liveRoomId }, data: { onlineCount, heat } })
+        .catch(() => null)
+      liveIo
+        .to(liveRoomId)
+        .emit('live:online:update', { liveRoomId, onlineCount, heat })
     })
 
     socket.on('live:leave', ({ liveRoomId, userId }) => {
@@ -43,7 +47,9 @@ export function attachLiveSocket(server: HttpServer) {
       liveIo.to(liveRoomId).emit('live:online:update', {
         liveRoomId,
         onlineCount: (roomUsers.get(liveRoomId)?.size || 0) + 1200,
-        heat: ((roomUsers.get(liveRoomId)?.size || 0) + 1200) * 7 + Math.floor(Math.random() * 100),
+        heat:
+          ((roomUsers.get(liveRoomId)?.size || 0) + 1200) * 7 +
+          Math.floor(Math.random() * 100),
       })
     })
   })

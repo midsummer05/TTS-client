@@ -38,7 +38,15 @@ function CommentIcon() {
     >
       <View style={{ flexDirection: 'row', gap: 4 }}>
         {[0, 1, 2].map((item) => (
-          <View key={item} style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: '#111' }} />
+          <View
+            key={item}
+            style={{
+              width: 5,
+              height: 5,
+              borderRadius: 3,
+              backgroundColor: '#111',
+            }}
+          />
         ))}
       </View>
       <View
@@ -74,7 +82,12 @@ function ActionButton({
     <TouchableOpacity
       activeOpacity={0.8}
       onPress={onPress}
-      style={{ width: 54, minHeight: 76, alignItems: 'center', justifyContent: 'center' }}
+      style={{
+        width: 54,
+        minHeight: 76,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
     >
       {variant === 'comment' ? (
         <CommentIcon />
@@ -93,7 +106,16 @@ function ActionButton({
         </Text>
       )}
       {typeof count === 'number' ? (
-        <Text style={{ marginTop: 8, color: '#fff', fontSize: 18, fontWeight: '800' }}>{formatCount(count)}</Text>
+        <Text
+          style={{
+            marginTop: 8,
+            color: '#fff',
+            fontSize: 18,
+            fontWeight: '800',
+          }}
+        >
+          {formatCount(count)}
+        </Text>
       ) : null}
     </TouchableOpacity>
   )
@@ -115,11 +137,30 @@ export function FeedActionSidebar({
   onSharePress,
 }: Props) {
   return (
-    <View style={{ position: 'absolute', right: 8, top: '20%', alignItems: 'center', gap: 16 }}>
+    <View
+      style={{
+        position: 'absolute',
+        right: 8,
+        top: '20%',
+        alignItems: 'center',
+        gap: 16,
+      }}
+    >
       <View style={{ width: 64, height: 78, alignItems: 'center' }}>
         <Image
-          source={{ uri: avatarUrl || 'https://api.dicebear.com/9.x/thumbs/png?seed=author' }}
-          style={{ width: 60, height: 60, borderRadius: 30, borderWidth: 2, borderColor: '#fff', backgroundColor: '#333' }}
+          source={{
+            uri:
+              avatarUrl ||
+              'https://api.dicebear.com/9.x/thumbs/png?seed=author',
+          }}
+          style={{
+            width: 60,
+            height: 60,
+            borderRadius: 30,
+            borderWidth: 2,
+            borderColor: '#fff',
+            backgroundColor: '#333',
+          }}
         />
         <TouchableOpacity
           activeOpacity={0.85}
@@ -135,15 +176,37 @@ export function FeedActionSidebar({
             backgroundColor: followed ? '#fff' : '#ff2f5f',
           }}
         >
-          <Text style={{ color: followed ? '#ff2f5f' : '#fff', fontSize: 24, lineHeight: 28, fontWeight: '900' }}>
+          <Text
+            style={{
+              color: followed ? '#ff2f5f' : '#fff',
+              fontSize: 24,
+              lineHeight: 28,
+              fontWeight: '900',
+            }}
+          >
             {followed ? '✓' : '+'}
           </Text>
         </TouchableOpacity>
       </View>
 
-      <ActionButton icon="♥" count={likeCount + (liked ? 1 : 0)} active={liked} onPress={onLikePress} />
-      <ActionButton icon="" variant="comment" count={commentCount} onPress={onCommentPress} />
-      <ActionButton icon="★" count={favoriteCount + (favorited ? 1 : 0)} active={favorited} onPress={onFavoritePress} />
+      <ActionButton
+        icon="♥"
+        count={likeCount + (liked ? 1 : 0)}
+        active={liked}
+        onPress={onLikePress}
+      />
+      <ActionButton
+        icon=""
+        variant="comment"
+        count={commentCount}
+        onPress={onCommentPress}
+      />
+      <ActionButton
+        icon="★"
+        count={favoriteCount + (favorited ? 1 : 0)}
+        active={favorited}
+        onPress={onFavoritePress}
+      />
       <ActionButton icon="↗" count={shareCount} onPress={onSharePress} />
     </View>
   )
