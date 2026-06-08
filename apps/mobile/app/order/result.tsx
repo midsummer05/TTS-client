@@ -4,17 +4,22 @@ import { useEffect } from 'react'
 import { Text, TouchableOpacity, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { api } from '@/api'
+import { LoadingView } from '@/components/StateViews'
+import { useRequireLogin } from '@/hooks/useRequireLogin'
 
 export default function PayResultScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
+  const isLoggedIn = useRequireLogin('/order/result')
   const pay = useMutation({ mutationFn: api.payOrder })
 
   useEffect(() => {
-    if (id) {
+    if (id && isLoggedIn) {
       const timer = setTimeout(() => pay.mutate(id), 900)
       return () => clearTimeout(timer)
     }
-  }, [id])
+  }, [id, isLoggedIn])
+
+  if (!isLoggedIn) return <LoadingView />
 
   return (
     <SafeAreaView

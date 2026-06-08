@@ -11,6 +11,15 @@ body {
   color: #fff;
   font-size: 18px;
   font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.header-user {
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .content {
@@ -40,13 +49,23 @@ body {
   margin-bottom: 12px;
 }
 
-/* AI 流式输出光标闪烁 */
-@keyframes blink {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0;
-  }
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: linear-gradient(135deg, #101014 0%, #202333 52%, #30364c 100%);
+}
+
+.login-card {
+  width: min(420px, 100%);
+  border: 0;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.28);
+}
+
+.upload-hint {
+  margin-top: 8px;
+  color: #667085;
+  font-size: 13px;
 }

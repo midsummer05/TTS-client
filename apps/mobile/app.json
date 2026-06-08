@@ -5,6 +5,12 @@
     "scheme": "livecommerce",
     "plugins": ["expo-router"],
     "orientation": "portrait",
-    "userInterfaceStyle": "automatic"
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#101014",
+    "primaryColor": "#101014",
+    "androidStatusBar": {
+      "backgroundColor": "#101014",
+      "barStyle": "light-content"
+    }
   }
 }

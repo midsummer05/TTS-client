@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client'
+import { cosVideoUrl } from './cosVideoUrls.js'
 
 const prisma = new PrismaClient()
 
@@ -87,7 +88,7 @@ const assets = [
 ]
 
 function mediaUrl(file: string) {
-  return `/media/${file.split('/').map(encodeURIComponent).join('/')}`
+  return cosVideoUrl(file) ?? `/media/${file.split('/').map(encodeURIComponent).join('/')}`
 }
 
 async function main() {

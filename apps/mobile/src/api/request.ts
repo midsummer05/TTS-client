@@ -3,15 +3,25 @@ import { Platform } from 'react-native'
 import { useUserStore } from '@/store/userStore'
 
 const webHost =
-  typeof window !== 'undefined' ? window.location.hostname : 'localhost'
-
+  Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.hostname
+    ? window.location.hostname
+    : 'localhost'
 const envApiUrl = process.env.EXPO_PUBLIC_API_URL as string | undefined
 
-export const API_BASE_URL = envApiUrl
-  ? envApiUrl
-  : Platform.OS === 'web'
-    ? `http://${webHost}:4000`
-    : 'http://10.135.7.67:4000'
+function nativeApiBaseUrl() {
+  if (Platform.OS === 'android') {
+    return 'http://10.0.2.2:4000'
+  }
+
+  return 'http://localhost:4000'
+}
+
+export const API_BASE_URL =
+  envApiUrl
+    ? envApiUrl
+    : Platform.OS === 'web'
+      ? `http://${webHost}:4000`
+      : nativeApiBaseUrl()
 
 export function toMediaUrl(url?: string | null) {
   if (!url) return ''
@@ -32,14 +42,6 @@ request.interceptors.request.use((config) => {
   return config
 })
 
-async function mockLogin() {
-  const response = await axios.post(`${API_BASE_URL}/api/auth/mock-login`, {
-    nickname: '移动端用户',
-  })
-  useUserStore.getState().setSession(response.data.data)
-  return response.data.data.token as string
-}
-
 request.interceptors.response.use(
   (response) => {
     const payload = response.data
@@ -49,17 +51,8 @@ request.interceptors.response.use(
     return payload.data
   },
   async (error) => {
-    const originalRequest = error.config
     const status = error.response?.status
-    if (status === 401 && originalRequest && !originalRequest.__retried) {
-      originalRequest.__retried = true
-      const token = await mockLogin()
-      originalRequest.headers = originalRequest.headers || {}
-      originalRequest.headers.Authorization = `Bearer ${token}`
-      return request(originalRequest)
-    }
-    throw new Error(
-      error.response?.data?.message || error.message || '请求失败',
-    )
+    if (status === 401) useUserStore.getState().clearSession()
+    throw new Error(error.response?.data?.message || error.message || '请求失败')
   },
 )

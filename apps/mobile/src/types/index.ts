@@ -16,6 +16,7 @@ export type User = {
   id: string
   username: string
   nickname: string
+  phone?: string | null
   avatarUrl?: string | null
   bio?: string | null
   homepageTitle?: string | null
@@ -34,6 +35,9 @@ export type VideoItem = {
   author?: User | null
   likeCount: number
   commentCount: number
+  favoriteCount?: number
+  likedByMe?: boolean
+  favoritedByMe?: boolean
   products: Product[]
 }
 
@@ -75,10 +79,12 @@ export type CartItem = {
   product: Product
 }
 
+export type OrderStatus = 'PENDING_PAYMENT' | 'PAID' | 'SHIPPED' | 'COMPLETED' | 'CANCELLED'
+
 export type Order = {
   id: string
   orderNo: string
-  status: string
+  status: OrderStatus
   totalAmount: number
   discountAmount: number
   payAmount: number

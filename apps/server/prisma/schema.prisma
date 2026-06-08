@@ -15,6 +15,7 @@ model User {
   bio            String?
   homepageTitle  String?
   phone          String?  @unique
+  passwordHash   String?
   followerCount  Int      @default(0)
   followingCount Int      @default(0)
   createdAt      DateTime @default(now())
