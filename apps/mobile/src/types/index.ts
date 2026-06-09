@@ -38,7 +38,24 @@ export type VideoItem = {
   favoriteCount?: number
   likedByMe?: boolean
   favoritedByMe?: boolean
+  liveRoomId?: string | null
   products: Product[]
+}
+
+export type MarketingRule = {
+  id: string
+  liveRoomId: string
+  type: 'COUPON' | 'DISCOUNT' | 'FULL_REDUCTION' | 'SECKILL'
+  title: string
+  status: 'ACTIVE' | 'INACTIVE'
+  productId?: string | null
+  amount?: number | null
+  minAmount?: number | null
+  discountPercent?: number | null
+  countdownSeconds?: number | null
+  createdAt?: string | null
+  startsAt?: string | null
+  endsAt?: string | null
 }
 
 export type Comment = {
@@ -61,6 +78,7 @@ export type LiveRoom = {
   heat: number
   products: Product[]
   currentProductId?: string | null
+  marketingRules?: MarketingRule[]
 }
 
 export type MessageItem = {

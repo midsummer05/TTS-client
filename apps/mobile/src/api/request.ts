@@ -10,7 +10,7 @@ const envApiUrl = process.env.EXPO_PUBLIC_API_URL as string | undefined
 
 function nativeApiBaseUrl() {
   if (Platform.OS === 'android') {
-    return 'http://10.0.2.2:4000'
+    return 'http://localhost:4000'
   }
 
   return 'http://localhost:4000'

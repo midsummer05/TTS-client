@@ -6,10 +6,18 @@ import { SafeAreaView } from 'react-native-safe-area-context'
 import { api } from '@/api'
 import { LoadingView } from '@/components/StateViews'
 import { useRequireLogin } from '@/hooks/useRequireLogin'
+import type { MarketingRule } from '@/types'
 import { formatPrice } from '@/utils/formatPrice'
 
+function bestPercent(rules: MarketingRule[], productId: string) {
+  const percents = rules
+    .filter((rule) => ['DISCOUNT', 'SECKILL'].includes(rule.type) && (!rule.productId || rule.productId === productId) && rule.discountPercent)
+    .map((rule) => Math.max(1, Math.min(100, rule.discountPercent || 100)))
+  return percents.length ? Math.min(...percents) : 100
+}
+
 export default function OrderConfirmScreen() {
-  const params = useLocalSearchParams<{ cartItemIds?: string; productId?: string }>()
+  const params = useLocalSearchParams<{ cartItemIds?: string; productId?: string; liveRoomId?: string }>()
   const redirect = params.productId
     ? `/order/confirm?productId=${params.productId}`
     : params.cartItemIds
@@ -27,6 +35,11 @@ export default function OrderConfirmScreen() {
     queryFn: api.cart,
     enabled: isLoggedIn && !params.productId,
   })
+  const marketingQuery = useQuery({
+    queryKey: ['confirm-marketing', params.liveRoomId],
+    queryFn: () => api.liveMarketingRules(params.liveRoomId!),
+    enabled: isLoggedIn && !!params.liveRoomId,
+  })
 
   const cartIds = params.cartItemIds?.split(',').filter(Boolean) || []
   const items = params.productId
@@ -37,13 +50,24 @@ export default function OrderConfirmScreen() {
         .filter((item) => cartIds.includes(item.id))
         .map((item) => ({ id: item.id, title: item.product.title, coverUrl: item.product.coverUrl, price: item.product.price, quantity: item.quantity }))
   const total = items.reduce((sum, item) => sum + item.price * item.quantity, 0)
+  const marketingRules = marketingQuery.data || []
+  const discountedTotal = items.reduce((sum, item) => sum + Math.round(item.price * bestPercent(marketingRules, item.id) / 100) * item.quantity, 0)
+  const priceDiscount = Math.max(total - discountedTotal, 0)
+  const fullReduction = marketingRules
+    .filter((rule) => rule.type === 'FULL_REDUCTION' && rule.amount && discountedTotal >= (rule.minAmount || 0))
+    .sort((a, b) => (b.amount || 0) - (a.amount || 0))[0]
+  const coupon = marketingRules
+    .filter((rule) => rule.type === 'COUPON' && rule.amount && discountedTotal >= (rule.minAmount || 0))
+    .sort((a, b) => (b.amount || 0) - (a.amount || 0))[0]
+  const liveDiscount = Math.min(priceDiscount + (fullReduction?.amount || 0) + (coupon?.amount || 0), total)
+  const payAmount = Math.max(total - liveDiscount, 0)
 
   async function submit() {
     try {
       const order = await create.mutateAsync(
         params.productId
-          ? { source: 'buyNow', productId: params.productId, quantity: 1, address: '北京市朝阳区测试地址' }
-          : { source: 'cart', cartItemIds: params.cartItemIds?.split(',') || [], address: '北京市朝阳区测试地址' },
+          ? { source: 'buyNow', productId: params.productId, quantity: 1, address: '北京市朝阳区测试地址', liveRoomId: params.liveRoomId }
+          : { source: 'cart', cartItemIds: params.cartItemIds?.split(',') || [], address: '北京市朝阳区测试地址', liveRoomId: params.liveRoomId },
       )
       router.replace({ pathname: '/order/result', params: { id: order.id } })
     } catch (error) {
@@ -51,7 +75,7 @@ export default function OrderConfirmScreen() {
     }
   }
 
-  if (!isLoggedIn || productQuery.isLoading || cartQuery.isLoading) return <LoadingView />
+  if (!isLoggedIn || productQuery.isLoading || cartQuery.isLoading || marketingQuery.isLoading) return <LoadingView />
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
@@ -77,7 +101,11 @@ export default function OrderConfirmScreen() {
         </View>
         <View style={{ marginTop: 18, gap: 8 }}>
           <Text>商品金额：{formatPrice(total)}</Text>
-          <Text style={{ fontSize: 18, fontWeight: '800' }}>应付：{formatPrice(total)}</Text>
+          {priceDiscount > 0 ? <Text>折扣优惠：-{formatPrice(priceDiscount)}</Text> : null}
+          {fullReduction ? <Text>满减优惠：-{formatPrice(fullReduction.amount || 0)}</Text> : null}
+          {coupon ? <Text>优惠券：-{formatPrice(coupon.amount || 0)}</Text> : null}
+          {liveDiscount > 0 ? <Text style={{ color: '#e43d33' }}>优惠合计：-{formatPrice(liveDiscount)}</Text> : null}
+          <Text style={{ fontSize: 18, fontWeight: '800' }}>应付：{formatPrice(payAmount)}</Text>
         </View>
       </ScrollView>
       <TouchableOpacity disabled={create.isPending || items.length === 0} onPress={submit} style={{ position: 'absolute', left: 16, right: 16, bottom: 18, height: 52, borderRadius: 8, backgroundColor: items.length === 0 ? '#ccc' : '#e43d33', alignItems: 'center', justifyContent: 'center' }}>

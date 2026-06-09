@@ -77,6 +77,7 @@ export function FeedItem({
   const screenAspect = screenWidth / Math.max(screenHeight, 1)
   const videoWidth = screenAspect > videoAspect ? screenHeight * videoAspect : screenWidth
   const videoHeight = screenAspect > videoAspect ? screenHeight : screenWidth / videoAspect
+  const shouldRenderVideo = Platform.OS === 'web' || active
   const videoBoxStyle = {
     position: 'absolute' as const,
     left: (screenWidth - videoWidth) / 2,
@@ -88,31 +89,35 @@ export function FeedItem({
 
   return (
     <View style={{ width: screenWidth, height: screenHeight, backgroundColor: '#000', overflow: 'hidden' }}>
-      <Video
-        ref={videoRef}
-        source={{ uri: toMediaUrl(item.videoUrl) }}
-        posterSource={{ uri: toMediaUrl(item.coverUrl) }}
-        usePoster
-        shouldPlay={feedPlaying && active && !paused}
-        isMuted={muted}
-        isLooping
-        resizeMode={ResizeMode.CONTAIN}
-        onPlaybackStatusUpdate={(status) => {
-          if (!status.isLoaded) return
-          setPositionMillis(status.positionMillis || 0)
-          setDurationMillis(status.durationMillis || 0)
-        }}
-        onReadyForDisplay={(event) => {
-          const natural = event?.naturalSize || (event as unknown as { nativeEvent?: { naturalSize?: { width?: number; height?: number } } })?.nativeEvent?.naturalSize
-          const naturalWidth = natural?.width
-          const naturalHeight = natural?.height
-          if (naturalWidth && naturalHeight && naturalWidth > 0 && naturalHeight > 0) {
-            setVideoAspect(naturalWidth / naturalHeight)
-          }
-        }}
-        style={videoBoxStyle}
-        videoStyle={Platform.OS === 'web' ? ({ objectPosition: 'center center' } as never) : undefined}
-      />
+      {shouldRenderVideo ? (
+        <Video
+          ref={videoRef}
+          source={{ uri: toMediaUrl(item.videoUrl) }}
+          posterSource={{ uri: toMediaUrl(item.coverUrl) }}
+          usePoster
+          shouldPlay={feedPlaying && active && !paused}
+          isMuted={muted}
+          isLooping
+          resizeMode={ResizeMode.CONTAIN}
+          onPlaybackStatusUpdate={(status) => {
+            if (!status.isLoaded) return
+            setPositionMillis(status.positionMillis || 0)
+            setDurationMillis(status.durationMillis || 0)
+          }}
+          onReadyForDisplay={(event) => {
+            const natural = event?.naturalSize || (event as unknown as { nativeEvent?: { naturalSize?: { width?: number; height?: number } } })?.nativeEvent?.naturalSize
+            const naturalWidth = natural?.width
+            const naturalHeight = natural?.height
+            if (naturalWidth && naturalHeight && naturalWidth > 0 && naturalHeight > 0) {
+              setVideoAspect(naturalWidth / naturalHeight)
+            }
+          }}
+          style={videoBoxStyle}
+          videoStyle={Platform.OS === 'web' ? ({ objectPosition: 'center center' } as never) : undefined}
+        />
+      ) : (
+        <Image source={{ uri: toMediaUrl(item.coverUrl) }} style={{ position: 'absolute', inset: 0, width: screenWidth, height: screenHeight }} resizeMode="cover" />
+      )}
       <View style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.26)' }} />
       <TouchableOpacity activeOpacity={1} onPress={togglePaused} style={{ position: 'absolute', inset: 0 }} />
       <FeedActionSidebar

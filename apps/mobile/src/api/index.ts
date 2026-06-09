@@ -1,5 +1,5 @@
 import { request } from './request'
-import type { CartItem, Comment, LiveRoom, MessageItem, Order, OrderStatus, Product, User, VideoItem } from '@/types'
+import type { CartItem, Comment, LiveRoom, MarketingRule, MessageItem, Order, OrderStatus, Product, User, VideoItem } from '@/types'
 
 export const api = {
   login: (data: { phone: string; password: string }) => request.post('/auth/login', data) as Promise<{ token: string; user: User }>,
@@ -27,4 +27,5 @@ export const api = {
   liveComments: (id: string) => request.get(`/live-rooms/${id}/comments`) as Promise<Comment[]>,
   sendLiveComment: (id: string, content: string) => request.post(`/live-rooms/${id}/comments`, { content }) as Promise<Comment>,
   liveAudience: (id: string) => request.get(`/live-rooms/${id}/audience`) as Promise<User[]>,
+  liveMarketingRules: (id: string) => request.get(`/live-rooms/${id}/marketing-rules`) as Promise<MarketingRule[]>,
 }

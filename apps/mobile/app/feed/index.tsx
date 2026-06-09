@@ -21,7 +21,6 @@ export default function FeedScreen() {
   const token = useUserStore((state) => state.token)
   const requireLogin = useAuthPrompt('/feed')
   const query = useQuery({ queryKey: ['videos', token ? 'authed' : 'guest'], queryFn: () => api.videos() })
-  const liveRooms = useQuery({ queryKey: ['live-rooms'], queryFn: () => api.liveRooms() })
   const addCart = useMutation({ mutationFn: (productId: string) => api.addCart(productId) })
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 70 })
@@ -57,7 +56,7 @@ export default function FeedScreen() {
   }
 
   function liveRoomIdFor(item: VideoItem) {
-    return liveRooms.data?.find((room) => room.anchorUserId === item.userId || room.anchorName === item.authorName)?.id
+    return item.liveRoomId
   }
 
   function openLiveRoom(id: string) {
@@ -93,6 +92,10 @@ export default function FeedScreen() {
           data={query.data.items}
           keyExtractor={(item) => item.id}
           pagingEnabled
+          initialNumToRender={1}
+          maxToRenderPerBatch={1}
+          windowSize={3}
+          removeClippedSubviews
           showsVerticalScrollIndicator={false}
           snapToInterval={height}
           decelerationRate="fast"

@@ -1,9 +1,12 @@
-import { Image, Modal, Text, TouchableOpacity, View } from 'react-native'
+import { Image, Modal, ScrollView, Text, TouchableOpacity, View } from 'react-native'
+import { useEffect, useState } from 'react'
+import { toMediaUrl } from '@/api/request'
 import type { Product } from '@/types'
 import { formatPrice } from '@/utils/formatPrice'
 
 type Props = {
   product?: Product
+  products?: Product[]
   visible: boolean
   onClose: () => void
   onAddCart: (product: Product) => void
@@ -12,11 +15,21 @@ type Props = {
 
 export function ProductSheet({
   product,
+  products = product ? [product] : [],
   visible,
   onClose,
   onAddCart,
   onBuyNow,
 }: Props) {
+  const [selected, setSelected] = useState<Product | undefined>(product || products[0])
+
+  useEffect(() => {
+    if (!visible) return
+    setSelected(product || products[0])
+  }, [product?.id, products[0]?.id, visible])
+
+  const list = products.length ? products : selected ? [selected] : []
+
   return (
     <Modal
       visible={visible}
@@ -33,7 +46,7 @@ export function ProductSheet({
           justifyContent: 'flex-end',
         }}
       >
-        {product ? (
+        {selected ? (
           <TouchableOpacity
             activeOpacity={1}
             style={{
@@ -45,9 +58,36 @@ export function ProductSheet({
               padding: 18,
             }}
           >
+            {list.length > 1 ? (
+              <>
+                <Text style={{ marginBottom: 12, color: '#111', fontSize: 18, fontWeight: '800' }}>全部商品</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 16 }}>
+                  <View style={{ flexDirection: 'row', gap: 10 }}>
+                    {list.map((item) => (
+                      <TouchableOpacity
+                        key={item.id}
+                        onPress={() => setSelected(item)}
+                        style={{
+                          width: 116,
+                          borderRadius: 10,
+                          borderWidth: selected.id === item.id ? 2 : 1,
+                          borderColor: selected.id === item.id ? '#e43d33' : '#e5e7eb',
+                          padding: 8,
+                          backgroundColor: selected.id === item.id ? '#fff5f5' : '#fff',
+                        }}
+                      >
+                        <Image source={{ uri: toMediaUrl(item.coverUrl) }} style={{ width: '100%', height: 70, borderRadius: 8, backgroundColor: '#eee' }} />
+                        <Text numberOfLines={2} style={{ marginTop: 6, color: '#111', fontSize: 12, fontWeight: '700' }}>{item.title}</Text>
+                        <Text style={{ marginTop: 4, color: '#e43d33', fontSize: 13, fontWeight: '800' }}>{formatPrice(item.price)}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </ScrollView>
+              </>
+            ) : null}
             <View style={{ flexDirection: 'row', gap: 12 }}>
               <Image
-                source={{ uri: product.coverUrl }}
+                source={{ uri: toMediaUrl(selected.coverUrl) }}
                 style={{
                   width: 110,
                   height: 110,
@@ -57,9 +97,9 @@ export function ProductSheet({
               />
               <View style={{ flex: 1 }}>
                 <Text
-                  style={{ fontSize: 18, fontWeight: '700', color: '#111' }}
-                >
-                  {product.title}
+                style={{ fontSize: 18, fontWeight: '700', color: '#111' }}
+              >
+                  {selected.title}
                 </Text>
                 <Text
                   style={{
@@ -69,15 +109,15 @@ export function ProductSheet({
                     color: '#e43d33',
                   }}
                 >
-                  {formatPrice(product.price)}
+                  {formatPrice(selected.price)}
                 </Text>
                 <Text style={{ marginTop: 6, color: '#777' }}>
-                  库存 {product.stock} · 已售 {product.sales}
+                  库存 {selected.stock} · 已售 {selected.sales}
                 </Text>
               </View>
             </View>
             <Text style={{ marginTop: 18, lineHeight: 22, color: '#444' }}>
-              {product.description || '直播间精选商品，支持加购和立即购买。'}
+              {selected.description || '直播间精选商品，支持加购和立即购买。'}
             </Text>
             <View
               style={{
@@ -100,8 +140,8 @@ export function ProductSheet({
               }}
             >
               <TouchableOpacity
-                disabled={product.stock <= 0}
-                onPress={() => onAddCart(product)}
+                disabled={selected.stock <= 0}
+                onPress={() => onAddCart(selected)}
                 style={{
                   flex: 1,
                   height: 48,
@@ -116,8 +156,8 @@ export function ProductSheet({
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
-                disabled={product.stock <= 0}
-                onPress={() => onBuyNow(product)}
+                disabled={selected.stock <= 0}
+                onPress={() => onBuyNow(selected)}
                 style={{
                   flex: 1,
                   height: 48,

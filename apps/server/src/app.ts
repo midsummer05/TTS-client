@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken'
 import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { Readable } from 'node:stream'
 import multer from 'multer'
 import { z } from 'zod'
 import { prisma } from './prisma.js'
@@ -76,6 +77,88 @@ function parseBody<T extends z.ZodTypeAny>(schema: T, body: unknown, res: expres
   fail(res, result.error.issues[0]?.message || '请求参数错误', 40000, 400)
 }
 
+type MarketingRuleInput = {
+  type: string
+  title: string
+  status?: string
+  productId?: string | null
+  amount?: number | null
+  minAmount?: number | null
+  discountPercent?: number | null
+  countdownSeconds?: number | null
+  startsAt?: Date | string | null
+  endsAt?: Date | string | null
+}
+
+function activeMarketingRuleWhere(liveRoomId: string) {
+  return {
+    liveRoomId,
+    status: 'ACTIVE',
+  }
+}
+
+function marketingRuleDto(rule: {
+  id: string
+  liveRoomId: string
+  type: string
+  title: string
+  status: string
+  productId: string | null
+  amount: number | null
+  minAmount: number | null
+  discountPercent: number | null
+  countdownSeconds: number | null
+  startsAt: Date | null
+  endsAt: Date | null
+  createdAt: Date
+}) {
+  return {
+    ...rule,
+    startsAt: rule.startsAt?.toISOString() || null,
+    endsAt: rule.endsAt?.toISOString() || null,
+    createdAt: rule.createdAt.toISOString(),
+  }
+}
+
+async function marketingRulesForRoom(liveRoomId: string) {
+  const rules = await prisma.marketingRule.findMany({ where: { liveRoomId, status: 'ACTIVE' }, orderBy: { createdAt: 'asc' } })
+  return rules.map(marketingRuleDto)
+}
+
+function bestPercentForProduct(rules: MarketingRuleInput[], productId: string) {
+  const percents = rules
+    .filter((rule) => ['DISCOUNT', 'SECKILL'].includes(rule.type) && (!rule.productId || rule.productId === productId) && rule.discountPercent)
+    .map((rule) => Math.max(1, Math.min(100, Number(rule.discountPercent))))
+  return percents.length ? Math.min(...percents) : 100
+}
+
+function calculateMarketingDiscount(products: Array<{ product: { id: string; price: number }; quantity: number }>, rules: MarketingRuleInput[]) {
+  const totalAmount = products.reduce((sum, item) => sum + item.product.price * item.quantity, 0)
+  const discountedAmount = products.reduce((sum, item) => {
+    const percent = bestPercentForProduct(rules, item.product.id)
+    return sum + Math.round(item.product.price * percent / 100) * item.quantity
+  }, 0)
+  const priceDiscountAmount = Math.max(totalAmount - discountedAmount, 0)
+  const fullReduction = rules
+    .filter((rule) => rule.type === 'FULL_REDUCTION' && rule.amount && discountedAmount >= (rule.minAmount || 0))
+    .sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0))[0]
+  const fullReductionAmount = fullReduction ? Number(fullReduction.amount) : 0
+  const coupon = rules
+    .filter((rule) => rule.type === 'COUPON' && rule.amount && discountedAmount >= (rule.minAmount || 0))
+    .sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0))[0]
+  const couponAmount = coupon ? Number(coupon.amount) : 0
+  const discountAmount = Math.min(priceDiscountAmount + fullReductionAmount + couponAmount, totalAmount)
+  return {
+    totalAmount,
+    discountedAmount,
+    priceDiscountAmount,
+    fullReductionAmount,
+    couponAmount,
+    discountAmount,
+    payAmount: Math.max(totalAmount - discountAmount, 0),
+  }
+}
+
 function envValue(name: string) {
   if (process.env[name]) return process.env[name]
   const envPath = [path.resolve(process.cwd(), '.env'), path.resolve(process.cwd(), 'apps', 'server', '.env')].find((item) => fs.existsSync(item))
@@ -93,16 +176,23 @@ function sanitizeFileName(name: string) {
   return name.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, '-')
 }
 
-async function uploadToCos(file: Express.Multer.File) {
+function fileExtension(file: Express.Multer.File) {
+  const fromName = path.extname(file.originalname || '').replace(/[^\w.]/g, '').toLowerCase()
+  if (fromName) return fromName
+  const fromMime = file.mimetype.split('/')[1]?.split(';')[0]
+  return fromMime ? `.${fromMime.replace(/[^\w]/g, '')}` : ''
+}
+
+async function uploadToCos(file: Express.Multer.File, prefixName = 'TENCENT_COS_PREFIX') {
   const secretId = envValue('TENCENT_SECRET_ID')
   const secretKey = envValue('TENCENT_SECRET_KEY')
   const bucket = envValue('TENCENT_COS_BUCKET')
   const region = envValue('TENCENT_COS_REGION')
-  const prefix = envValue('TENCENT_COS_PREFIX') || ''
+  const prefix = envValue(prefixName) || envValue('TENCENT_COS_PREFIX') || ''
   if (!secretId || !secretKey || !bucket || !region) throw new Error('COS 配置不完整，请检查 .env')
 
   const cos = new COS({ SecretId: secretId, SecretKey: secretKey })
-  const key = `${prefix}${Date.now()}-${randomBytes(4).toString('hex')}-${sanitizeFileName(file.originalname)}`
+  const key = `${prefix}${Date.now()}-${randomBytes(8).toString('hex')}${fileExtension(file)}`
   await new Promise((resolve, reject) => {
     cos.putObject(
       {
@@ -111,6 +201,7 @@ async function uploadToCos(file: Express.Multer.File) {
         Key: key,
         Body: file.buffer,
         ContentType: file.mimetype || 'video/mp4',
+        ACL: 'public-read',
       },
       (error, data) => (error ? reject(error) : resolve(data)),
     )
@@ -119,6 +210,36 @@ async function uploadToCos(file: Express.Multer.File) {
 }
 
 app.get('/api/health', (_req, res) => ok(res, { status: 'up' }))
+
+app.get('/api/media-proxy', async (req, res) => {
+  const rawUrl = typeof req.query.url === 'string' ? req.query.url : ''
+  if (!rawUrl) return fail(res, '缺少媒体地址')
+  let mediaUrl: URL
+  try {
+    mediaUrl = new URL(rawUrl)
+  } catch {
+    return fail(res, '媒体地址格式不正确')
+  }
+  const allowedHosts = ['myqcloud.com', 'unsplash.com']
+  if (!allowedHosts.some((host) => mediaUrl.hostname === host || mediaUrl.hostname.endsWith(`.${host}`))) {
+    return fail(res, '不允许代理该媒体地址')
+  }
+
+  const upstream = await fetch(mediaUrl, {
+    headers: req.headers.range ? { Range: req.headers.range } : undefined,
+  })
+  if (!upstream.ok && upstream.status !== 206) {
+    return fail(res, `媒体资源访问失败：${upstream.status}`, 50002, upstream.status)
+  }
+  res.status(upstream.status)
+  for (const header of ['content-type', 'content-length', 'content-range', 'accept-ranges', 'cache-control']) {
+    const value = upstream.headers.get(header)
+    if (value) res.setHeader(header, value)
+  }
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  if (!upstream.body) return res.end()
+  Readable.fromWeb(upstream.body as never).pipe(res)
+})
 
 app.post('/api/auth/register', async (req, res) => {
   const body = parseBody(z.object({
@@ -279,11 +400,24 @@ app.get('/api/videos', async (req, res) => {
   const favoriteCountByVideoId = new Map(favoriteCounts.map((item) => [item.targetId, item._count._all]))
   const likedIds = new Set(interactionRows.filter((item) => item.type === 'LIKE').map((item) => item.targetId))
   const favoritedIds = new Set(interactionRows.filter((item) => item.type === 'FAVORITE').map((item) => item.targetId))
+  const liveRooms = await prisma.liveRoom.findMany({
+    where: {
+      status: { in: ['LIVE', 'LIVING'] },
+      OR: [
+        { videoId: { in: items.map((item) => item.id) } },
+        { videoUrl: { in: items.map((item) => item.videoUrl) } },
+      ],
+    },
+    select: { id: true, videoId: true, videoUrl: true },
+  })
+  const liveRoomIdByVideoId = new Map(liveRooms.filter((room) => room.videoId).map((room) => [room.videoId, room.id]))
+  const liveRoomIdByVideoUrl = new Map(liveRooms.map((room) => [room.videoUrl, room.id]))
   ok(res, {
     items: items.map((item) => ({
       ...item,
       author: item.author ? publicUser(item.author) : null,
       products: item.products.map((link) => link.product),
+      liveRoomId: liveRoomIdByVideoId.get(item.id) || liveRoomIdByVideoUrl.get(item.videoUrl) || null,
       favoriteCount: favoriteCountByVideoId.get(item.id) || 0,
       likedByMe: likedIds.has(item.id),
       favoritedByMe: favoritedIds.has(item.id),
@@ -308,10 +442,15 @@ app.get('/api/videos/:id', async (req, res) => {
       })
     : []
   const favoriteCount = await prisma.interaction.count({ where: { targetType: 'VIDEO', targetId: video.id, type: 'FAVORITE' } })
+  const liveRoom = await prisma.liveRoom.findFirst({
+    where: { OR: [{ videoId: video.id }, { videoUrl: video.videoUrl }], status: { in: ['LIVE', 'LIVING'] } },
+    select: { id: true },
+  })
   ok(res, {
     ...video,
     author: video.author ? publicUser(video.author) : null,
     products: video.products.map((link) => link.product),
+    liveRoomId: liveRoom?.id || null,
     favoriteCount,
     likedByMe: interactions.some((item) => item.type === 'LIKE'),
     favoritedByMe: interactions.some((item) => item.type === 'FAVORITE'),
@@ -448,6 +587,7 @@ app.post('/api/orders', auth, async (req: AuthedRequest, res) => {
       quantity: z.number().int().positive().optional(),
       address: z.string().min(3),
       couponId: z.string().optional(),
+      liveRoomId: z.string().optional(),
     })
     .parse(req.body)
 
@@ -472,7 +612,10 @@ app.post('/api/orders', auth, async (req: AuthedRequest, res) => {
 
   const totalAmount = products.reduce((sum, item) => sum + item.product!.price * item.quantity, 0)
   const coupon = body.couponId ? await prisma.coupon.findUnique({ where: { id: body.couponId } }) : null
-  const discountAmount = coupon && coupon.status === 'ACTIVE' && totalAmount >= coupon.minAmount ? coupon.amount : 0
+  const marketingRules = body.liveRoomId ? await prisma.marketingRule.findMany({ where: activeMarketingRuleWhere(body.liveRoomId) }) : []
+  const marketing = calculateMarketingDiscount(products.map((item) => ({ product: { id: item.product!.id, price: item.product!.price }, quantity: item.quantity })), marketingRules)
+  const couponDiscountAmount = coupon && coupon.status === 'ACTIVE' && marketing.payAmount >= coupon.minAmount ? coupon.amount : 0
+  const discountAmount = Math.min(marketing.discountAmount + couponDiscountAmount, totalAmount)
   const payAmount = Math.max(totalAmount - discountAmount, 0)
 
   const order = await prisma.$transaction(async (tx) => {
@@ -553,14 +696,18 @@ app.post('/api/orders/:id/cancel', auth, async (req: AuthedRequest, res) => {
 })
 
 app.get('/api/live-rooms', async (_req, res) => {
-  const rooms = await prisma.liveRoom.findMany({ include: { anchor: true, products: { include: { product: true } } } })
-  ok(res, rooms.map((room) => ({ ...room, anchor: room.anchor ? publicUser(room.anchor) : null, products: room.products.map((item) => item.product) })))
+  const rooms = await prisma.liveRoom.findMany({ include: { anchor: true, products: { include: { product: true } }, marketingRules: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'asc' } } } })
+  ok(res, rooms.map((room) => ({ ...room, anchor: room.anchor ? publicUser(room.anchor) : null, products: room.products.map((item) => item.product), marketingRules: room.marketingRules.map(marketingRuleDto) })))
 })
 
 app.get('/api/live-rooms/:id', async (req, res) => {
-  const room = await prisma.liveRoom.findUnique({ where: { id: param(req, 'id') }, include: { anchor: true, products: { include: { product: true } } } })
+  const room = await prisma.liveRoom.findUnique({ where: { id: param(req, 'id') }, include: { anchor: true, products: { include: { product: true } }, marketingRules: { where: { status: 'ACTIVE' }, orderBy: { createdAt: 'asc' } } } })
   if (!room) return fail(res, '直播间不存在', 40401, 404)
-  ok(res, { ...room, anchor: room.anchor ? publicUser(room.anchor) : null, products: room.products.map((item) => item.product) })
+  ok(res, { ...room, anchor: room.anchor ? publicUser(room.anchor) : null, products: room.products.map((item) => item.product), marketingRules: room.marketingRules.map(marketingRuleDto) })
+})
+
+app.get('/api/live-rooms/:id/marketing-rules', async (req, res) => {
+  ok(res, await marketingRulesForRoom(param(req, 'id')))
 })
 
 app.get('/api/live-rooms/:id/products', async (req, res) => {
@@ -604,27 +751,210 @@ app.post('/api/videos/:id/comments', auth, async (req: AuthedRequest, res) => {
 
 app.use('/api/admin', auth)
 
+async function adminOwnerUser() {
+  return prisma.user.upsert({
+    where: { username: 'test' },
+    update: { nickname: '测试者' },
+    create: {
+      username: 'test',
+      nickname: '测试者',
+      avatarUrl: 'https://api.dicebear.com/9.x/thumbs/png?seed=test',
+      bio: '测试阶段统一使用的商家身份。',
+      homepageTitle: '测试者的运营主页',
+    },
+  })
+}
+
+async function attachLiveRoomToVideos<T extends { id: string; videoUrl: string }>(videos: T[]) {
+  const rooms = await prisma.liveRoom.findMany({
+    where: {
+      OR: [
+        { videoId: { in: videos.map((item) => item.id) } },
+        { videoUrl: { in: videos.map((item) => item.videoUrl) } },
+      ],
+    },
+    include: { products: { include: { product: true }, orderBy: { sort: 'asc' } } },
+  })
+  const roomByVideoId = new Map(rooms.filter((room) => room.videoId).map((room) => [room.videoId, room]))
+  const roomByVideoUrl = new Map(rooms.map((room) => [room.videoUrl, room]))
+  return videos.map((video) => {
+    const liveRoom = roomByVideoId.get(video.id) || roomByVideoUrl.get(video.videoUrl)
+    return {
+      ...video,
+      liveRoom: liveRoom ? { ...liveRoom, products: liveRoom.products } : null,
+      liveRoomId: liveRoom?.id || null,
+    }
+  })
+}
+
+async function syncLiveRoomForVideo(input: {
+  videoId: string
+  oldVideoUrl?: string | null
+  title: string
+  coverUrl: string
+  videoUrl: string
+  ownerId: string
+  ownerName: string
+  ownerAvatar?: string | null
+  productIds: string[]
+  liveTitle?: string | null
+  liveStatus?: string
+  currentProductId?: string | null
+}) {
+  const productIds = uniqueIds(input.productIds)
+  const existing = await prisma.liveRoom.findFirst({
+    where: {
+      OR: [
+        { videoId: input.videoId },
+        { videoUrl: input.videoUrl },
+        ...(input.oldVideoUrl && input.oldVideoUrl !== input.videoUrl ? [{ videoUrl: input.oldVideoUrl }] : []),
+      ],
+    },
+  })
+  const liveRoom = await prisma.liveRoom.upsert({
+    where: { id: existing?.id || '__new_live_room__' },
+    update: {
+      title: input.liveTitle || input.title,
+      videoId: input.videoId,
+      coverUrl: input.coverUrl,
+      videoUrl: input.videoUrl,
+      anchorName: input.ownerName,
+      anchorAvatar: input.ownerAvatar || null,
+      anchorUserId: input.ownerId,
+      status: input.liveStatus || 'LIVE',
+      currentProductId: currentProductForRoom(productIds, input.currentProductId),
+    },
+    create: {
+      title: input.liveTitle || input.title,
+      videoId: input.videoId,
+      coverUrl: input.coverUrl,
+      videoUrl: input.videoUrl,
+      anchorName: input.ownerName,
+      anchorAvatar: input.ownerAvatar || null,
+      anchorUserId: input.ownerId,
+      status: input.liveStatus || 'LIVE',
+      currentProductId: currentProductForRoom(productIds, input.currentProductId),
+    },
+  })
+  await prisma.liveRoomProduct.deleteMany({ where: { liveRoomId: liveRoom.id } })
+  if (productIds.length) {
+    await prisma.liveRoomProduct.createMany({ data: productIds.map((productId, sort) => ({ liveRoomId: liveRoom.id, productId, sort })) })
+  }
+  const product = liveRoom.currentProductId ? await prisma.product.findUnique({ where: { id: liveRoom.currentProductId } }) : null
+  app.get('liveIo')?.to(liveRoom.id).emit('live:current-product:update', { liveRoomId: liveRoom.id, product })
+  return liveRoom
+}
+
 app.get('/api/admin/dashboard/overview', async (_req, res) => {
+  const owner = await adminOwnerUser()
   const [productCount, videoCount, liveRoomCount, orderCount, paidOrders] = await Promise.all([
-    prisma.product.count(),
-    prisma.video.count(),
-    prisma.liveRoom.count(),
+    prisma.product.count({ where: { sellerId: owner.id } }),
+    prisma.video.count({ where: { userId: owner.id } }),
+    prisma.liveRoom.count({ where: { anchorUserId: owner.id } }),
     prisma.order.count(),
     prisma.order.findMany({ where: { status: { in: ['PAID', 'SHIPPED', 'COMPLETED'] } } }),
   ])
   ok(res, { productCount, videoCount, liveRoomCount, orderCount, gmv: paidOrders.reduce((sum, order) => sum + order.payAmount, 0) })
 })
 
-app.get('/api/admin/products', async (_req, res) => ok(res, await prisma.product.findMany({ orderBy: { createdAt: 'desc' } })))
-app.post('/api/admin/products', async (req, res) => ok(res, await prisma.product.create({ data: req.body })))
-app.patch('/api/admin/products/:id', async (req, res) => ok(res, await prisma.product.update({ where: { id: req.params.id }, data: req.body })))
-app.patch('/api/admin/products/:id/status', async (req, res) => ok(res, await prisma.product.update({ where: { id: req.params.id }, data: { status: req.body.status } })))
+const productStatusSchema = z.enum(['ON_SALE', 'OFF_SALE'])
+const liveRoomStatusSchema = z.preprocess((value) => value === 'LIVING' ? 'LIVE' : value, z.enum(['NOT_STARTED', 'LIVE', 'ENDED']))
+const adminProductSchema = z.object({
+  title: z.string().trim().min(2, '商品名称至少需要 2 个字'),
+  coverUrl: z.string().trim().url('请先上传商品图片'),
+  price: z.number().int().nonnegative('价格不能小于 0'),
+  originPrice: z.number().int().nonnegative().optional().nullable(),
+  stock: z.number().int().nonnegative('库存不能小于 0'),
+  status: productStatusSchema.default('ON_SALE'),
+  category: z.string().trim().optional().nullable(),
+  tags: z.string().trim().optional().nullable(),
+  description: z.string().trim().optional().nullable(),
+  videoIds: z.array(z.string()).default([]),
+  liveRoomIds: z.array(z.string()).default([]),
+})
+
+function uniqueIds(ids: string[]) {
+  return Array.from(new Set(ids.filter(Boolean)))
+}
+
+async function replaceProductBindings(productId: string, videoIds: string[], liveRoomIds: string[]) {
+  const nextVideoIds = uniqueIds(videoIds)
+  const nextLiveRoomIds = uniqueIds(liveRoomIds)
+  await prisma.videoProduct.deleteMany({ where: { productId } })
+  await prisma.liveRoomProduct.deleteMany({ where: { productId } })
+  if (nextVideoIds.length) {
+    await prisma.videoProduct.createMany({ data: nextVideoIds.map((videoId, sort) => ({ videoId, productId, sort })) })
+  }
+  if (nextLiveRoomIds.length) {
+    await prisma.liveRoomProduct.createMany({ data: nextLiveRoomIds.map((liveRoomId, sort) => ({ liveRoomId, productId, sort })) })
+  }
+}
+
+app.get('/api/admin/products', async (_req, res) => {
+  const owner = await adminOwnerUser()
+  ok(res, await prisma.product.findMany({
+    where: { sellerId: owner.id },
+  include: {
+    videoLinks: { include: { video: { select: { id: true, title: true } } }, orderBy: { sort: 'asc' } },
+    liveLinks: { include: { liveRoom: { select: { id: true, title: true } } }, orderBy: { sort: 'asc' } },
+  },
+  orderBy: { createdAt: 'desc' },
+  }))
+})
+app.post('/api/admin/upload/image', upload.single('file'), async (req, res) => {
+  if (!req.file) return fail(res, '请选择要上传的商品图片')
+  if (!req.file.mimetype.startsWith('image/')) return fail(res, '只能上传图片文件')
+  ok(res, await uploadToCos(req.file, 'TENCENT_COS_IMAGE_PREFIX'))
+})
+app.post('/api/admin/products', async (req: AuthedRequest, res) => {
+  const owner = await adminOwnerUser()
+  const body = adminProductSchema.parse(req.body)
+  const { videoIds, liveRoomIds, ...productData } = body
+  const product = await prisma.$transaction(async (tx) => {
+    const created = await tx.product.create({ data: { ...productData, originPrice: productData.originPrice || null, sellerId: owner.id } })
+    const nextVideoIds = uniqueIds(videoIds)
+    const nextLiveRoomIds = uniqueIds(liveRoomIds)
+    if (nextVideoIds.length) await tx.videoProduct.createMany({ data: nextVideoIds.map((videoId, sort) => ({ videoId, productId: created.id, sort })) })
+    if (nextLiveRoomIds.length) await tx.liveRoomProduct.createMany({ data: nextLiveRoomIds.map((liveRoomId, sort) => ({ liveRoomId, productId: created.id, sort })) })
+    return created
+  })
+  ok(res, product)
+})
+app.patch('/api/admin/products/:id', async (req: AuthedRequest, res) => {
+  const owner = await adminOwnerUser()
+  const body = adminProductSchema.parse(req.body)
+  const productId = param(req, 'id')
+  const existing = await prisma.product.findFirst({ where: { id: productId, sellerId: owner.id } })
+  if (!existing) return fail(res, '商品不存在', 40401, 404)
+  const { videoIds, liveRoomIds, ...productData } = body
+  const product = await prisma.$transaction(async (tx) => {
+    const updated = await tx.product.update({ where: { id: productId }, data: { ...productData, originPrice: productData.originPrice || null, sellerId: owner.id } })
+    await tx.videoProduct.deleteMany({ where: { productId } })
+    await tx.liveRoomProduct.deleteMany({ where: { productId } })
+    const nextVideoIds = uniqueIds(videoIds)
+    const nextLiveRoomIds = uniqueIds(liveRoomIds)
+    if (nextVideoIds.length) await tx.videoProduct.createMany({ data: nextVideoIds.map((videoId, sort) => ({ videoId, productId, sort })) })
+    if (nextLiveRoomIds.length) await tx.liveRoomProduct.createMany({ data: nextLiveRoomIds.map((liveRoomId, sort) => ({ liveRoomId, productId, sort })) })
+    return updated
+  })
+  ok(res, product)
+})
+app.patch('/api/admin/products/:id/status', async (req, res) => {
+  const owner = await adminOwnerUser()
+  const body = z.object({ status: productStatusSchema }).parse(req.body)
+  const existing = await prisma.product.findFirst({ where: { id: param(req, 'id'), sellerId: owner.id } })
+  if (!existing) return fail(res, '商品不存在', 40401, 404)
+  ok(res, await prisma.product.update({ where: { id: param(req, 'id') }, data: { status: body.status } }))
+})
 
 const adminVideoSchema = z.object({
   title: z.string().trim().min(2, '视频标题至少需要 2 个字'),
   videoUrl: z.string().trim().url('请先上传本地视频'),
   status: z.enum(['DRAFT', 'PUBLISHED', 'OFFLINE']).default('DRAFT'),
   productIds: z.array(z.string()).default([]),
+  liveTitle: z.string().trim().optional().nullable(),
+  liveStatus: liveRoomStatusSchema.default('LIVE'),
+  currentProductId: z.string().optional().nullable(),
 })
 const defaultVideoCover = 'https://images.unsplash.com/photo-1611162616475-46b635cb6868?w=900'
 
@@ -641,7 +971,15 @@ async function coverForVideo(productIds: string[], fallback?: string | null) {
   return product?.coverUrl || fallback || defaultVideoCover
 }
 
-app.get('/api/admin/videos', async (_req, res) => ok(res, await prisma.video.findMany({ include: { products: { include: { product: true }, orderBy: { sort: 'asc' } } }, orderBy: { createdAt: 'desc' } })))
+app.get('/api/admin/videos', async (_req, res) => {
+  const owner = await adminOwnerUser()
+  const videos = await prisma.video.findMany({
+    where: { userId: owner.id },
+    include: { products: { include: { product: true }, orderBy: { sort: 'asc' } } },
+    orderBy: { createdAt: 'desc' },
+  })
+  ok(res, await attachLiveRoomToVideos(videos))
+})
 app.post('/api/admin/upload/video', upload.single('file'), async (req, res) => {
   if (!req.file) return fail(res, '请选择要上传的视频文件')
   if (!req.file.mimetype.startsWith('video/')) return fail(res, '只能上传视频文件')
@@ -649,7 +987,7 @@ app.post('/api/admin/upload/video', upload.single('file'), async (req, res) => {
 })
 app.post('/api/admin/videos', async (req: AuthedRequest, res) => {
   const body = adminVideoSchema.parse(req.body)
-  const user = await prisma.user.findUnique({ where: { id: req.userId } })
+  const user = await adminOwnerUser()
   if (!user) return fail(res, '用户不存在', 40401, 404)
   const coverUrl = await coverForVideo(body.productIds)
   const video = await prisma.$transaction(async (tx) => {
@@ -669,17 +1007,30 @@ app.post('/api/admin/videos', async (req: AuthedRequest, res) => {
     }
     return created
   })
-  ok(res, video)
+  const liveRoom = await syncLiveRoomForVideo({
+    videoId: video.id,
+    title: video.title,
+    coverUrl: video.coverUrl,
+    videoUrl: video.videoUrl,
+    ownerId: user.id,
+    ownerName: user.nickname,
+    ownerAvatar: user.avatarUrl,
+    productIds: body.productIds,
+    liveTitle: body.liveTitle || video.title,
+    liveStatus: body.liveStatus,
+    currentProductId: body.currentProductId,
+  })
+  ok(res, { ...video, liveRoom, liveRoomId: liveRoom.id })
 })
 app.patch('/api/admin/videos/:id', async (req: AuthedRequest, res) => {
   const body = adminVideoSchema.parse(req.body)
   const videoId = param(req, 'id')
   const [user, existing] = await Promise.all([
-    prisma.user.findUnique({ where: { id: req.userId } }),
+    adminOwnerUser(),
     prisma.video.findUnique({ where: { id: videoId } }),
   ])
   if (!user) return fail(res, '用户不存在', 40401, 404)
-  if (!existing) return fail(res, '视频不存在', 40401, 404)
+  if (!existing || existing.userId !== user.id) return fail(res, '视频不存在', 40401, 404)
   const coverUrl = await coverForVideo(body.productIds, existing.coverUrl)
   const video = await prisma.$transaction(async (tx) => {
     const updated = await tx.video.update({
@@ -700,37 +1051,208 @@ app.patch('/api/admin/videos/:id', async (req: AuthedRequest, res) => {
     }
     return updated
   })
-  ok(res, video)
+  const liveRoom = await syncLiveRoomForVideo({
+    videoId: video.id,
+    oldVideoUrl: existing.videoUrl,
+    title: video.title,
+    coverUrl: video.coverUrl,
+    videoUrl: video.videoUrl,
+    ownerId: user.id,
+    ownerName: user.nickname,
+    ownerAvatar: user.avatarUrl,
+    productIds: body.productIds,
+    liveTitle: body.liveTitle || video.title,
+    liveStatus: body.liveStatus,
+    currentProductId: body.currentProductId,
+  })
+  ok(res, { ...video, liveRoom, liveRoomId: liveRoom.id })
 })
-app.patch('/api/admin/videos/:id/status', async (req, res) => ok(res, await prisma.video.update({ where: { id: param(req, 'id') }, data: { status: req.body.status } })))
+app.patch('/api/admin/videos/:id/status', async (req, res) => {
+  const owner = await adminOwnerUser()
+  const body = z.object({ status: z.enum(['DRAFT', 'PUBLISHED', 'OFFLINE']) }).parse(req.body)
+  const existing = await prisma.video.findFirst({ where: { id: param(req, 'id'), userId: owner.id } })
+  if (!existing) return fail(res, '视频不存在', 40401, 404)
+  ok(res, await prisma.video.update({ where: { id: existing.id }, data: { status: body.status } }))
+})
 app.post('/api/admin/videos/:id/products', async (req, res) => {
+  const owner = await adminOwnerUser()
   const body = z.object({ productIds: z.array(z.string()) }).parse(req.body)
   const videoId = param(req, 'id')
+  const video = await prisma.video.findFirst({ where: { id: videoId, userId: owner.id } })
+  if (!video) return fail(res, '视频不存在', 40401, 404)
   await replaceVideoProducts(videoId, body.productIds)
+  const room = await prisma.liveRoom.findFirst({ where: { OR: [{ videoId: video.id }, { videoUrl: video.videoUrl }] } })
+  if (room) {
+    await prisma.liveRoomProduct.deleteMany({ where: { liveRoomId: room.id } })
+    const productIds = uniqueIds(body.productIds)
+    if (productIds.length) {
+      await prisma.liveRoomProduct.createMany({ data: productIds.map((productId, sort) => ({ liveRoomId: room.id, productId, sort })) })
+    }
+    const currentProductId = currentProductForRoom(productIds, room.currentProductId)
+    await prisma.liveRoom.update({ where: { id: room.id }, data: { currentProductId } })
+    const product = currentProductId ? await prisma.product.findUnique({ where: { id: currentProductId } }) : null
+    req.app.get('liveIo')?.to(room.id).emit('live:current-product:update', { liveRoomId: room.id, product })
+  }
   ok(res, true)
 })
 
-app.get('/api/admin/live-rooms', async (_req, res) => ok(res, await prisma.liveRoom.findMany({ include: { products: { include: { product: true } } }, orderBy: { createdAt: 'desc' } })))
-app.post('/api/admin/live-rooms', async (req, res) => ok(res, await prisma.liveRoom.create({ data: req.body })))
-app.patch('/api/admin/live-rooms/:id', async (req, res) => ok(res, await prisma.liveRoom.update({ where: { id: param(req, 'id') }, data: req.body })))
-app.post('/api/admin/live-rooms/:id/products', async (req, res) => {
-  const body = z.object({ productIds: z.array(z.string()) }).parse(req.body)
-  const liveRoomId = param(req, 'id')
-  await prisma.liveRoomProduct.deleteMany({ where: { liveRoomId } })
-  await prisma.liveRoomProduct.createMany({ data: body.productIds.map((productId, sort) => ({ liveRoomId, productId, sort })) })
-  ok(res, true)
+const adminLiveRoomSchema = z.object({
+  title: z.string().trim().min(2, '直播标题至少需要 2 个字'),
+  coverUrl: z.string().trim().url('请先上传直播封面'),
+  videoUrl: z.string().trim().url('请先上传模拟直播视频').optional().nullable(),
+  anchorName: z.string().trim().min(1, '请输入主播名称'),
+  anchorAvatar: z.string().trim().url('主播头像地址格式不正确').optional().nullable(),
+  status: liveRoomStatusSchema.default('NOT_STARTED'),
+  productIds: z.array(z.string()).default([]),
+  currentProductId: z.string().optional().nullable(),
 })
-app.patch('/api/admin/live-rooms/:id/current-product', async (req, res) => {
+
+function currentProductForRoom(productIds: string[], currentProductId?: string | null) {
+  const ids = uniqueIds(productIds)
+  if (currentProductId && ids.includes(currentProductId)) return currentProductId
+  return ids[0] || null
+}
+
+app.get('/api/admin/live-rooms', async (_req, res) => {
+  const owner = await adminOwnerUser()
+  ok(res, await prisma.liveRoom.findMany({
+    where: { anchorUserId: owner.id },
+    include: { products: { include: { product: true }, orderBy: { sort: 'asc' } } },
+    orderBy: { createdAt: 'desc' },
+  }))
+})
+app.post('/api/admin/live-rooms', async (req: AuthedRequest, res) => {
+  const owner = await adminOwnerUser()
+  const body = adminLiveRoomSchema.parse(req.body)
+  const { productIds, currentProductId, ...roomData } = body
+  const linkedProductIds = uniqueIds(productIds)
+  const room = await prisma.$transaction(async (tx) => {
+    const created = await tx.liveRoom.create({
+      data: {
+        ...roomData,
+        videoUrl: roomData.videoUrl || null,
+        anchorAvatar: roomData.anchorAvatar || null,
+        anchorUserId: owner.id,
+        currentProductId: currentProductForRoom(linkedProductIds, currentProductId),
+      },
+    })
+    if (linkedProductIds.length) {
+      await tx.liveRoomProduct.createMany({ data: linkedProductIds.map((productId, sort) => ({ liveRoomId: created.id, productId, sort })) })
+    }
+    return created
+  })
+  ok(res, room)
+})
+app.patch('/api/admin/live-rooms/:id', async (req: AuthedRequest, res) => {
+  const owner = await adminOwnerUser()
+  const body = adminLiveRoomSchema.parse(req.body)
   const liveRoomId = param(req, 'id')
-  const linked = await prisma.liveRoomProduct.findFirst({ where: { liveRoomId, productId: req.body.productId } })
-  if (!linked) return fail(res, '请先将商品绑定到直播间')
-  const room = await prisma.liveRoom.update({ where: { id: liveRoomId }, data: { currentProductId: req.body.productId } })
-  const product = await prisma.product.findUnique({ where: { id: req.body.productId } })
+  const existing = await prisma.liveRoom.findFirst({ where: { id: liveRoomId, anchorUserId: owner.id } })
+  if (!existing) return fail(res, '直播间不存在', 40401, 404)
+  const { productIds, currentProductId, ...roomData } = body
+  const linkedProductIds = uniqueIds(productIds)
+  const room = await prisma.$transaction(async (tx) => {
+    const updated = await tx.liveRoom.update({
+      where: { id: liveRoomId },
+      data: {
+        ...roomData,
+        videoUrl: roomData.videoUrl || null,
+        anchorAvatar: roomData.anchorAvatar || null,
+        anchorUserId: owner.id,
+        currentProductId: currentProductForRoom(linkedProductIds, currentProductId),
+      },
+    })
+    await tx.liveRoomProduct.deleteMany({ where: { liveRoomId } })
+    if (linkedProductIds.length) {
+      await tx.liveRoomProduct.createMany({ data: linkedProductIds.map((productId, sort) => ({ liveRoomId, productId, sort })) })
+    }
+    return updated
+  })
+  const product = room.currentProductId ? await prisma.product.findUnique({ where: { id: room.currentProductId } }) : null
   req.app.get('liveIo')?.to(liveRoomId).emit('live:current-product:update', { liveRoomId, product })
   ok(res, room)
 })
+app.post('/api/admin/live-rooms/:id/products', async (req, res) => {
+  const owner = await adminOwnerUser()
+  const body = z.object({ productIds: z.array(z.string()) }).parse(req.body)
+  const liveRoomId = param(req, 'id')
+  const productIds = uniqueIds(body.productIds)
+  const room = await prisma.$transaction(async (tx) => {
+    const existing = await tx.liveRoom.findFirst({ where: { id: liveRoomId, anchorUserId: owner.id } })
+    if (!existing) throw new Error('直播间不存在')
+    await tx.liveRoomProduct.deleteMany({ where: { liveRoomId } })
+    if (productIds.length) {
+      await tx.liveRoomProduct.createMany({ data: productIds.map((productId, sort) => ({ liveRoomId, productId, sort })) })
+    }
+    return tx.liveRoom.update({ where: { id: liveRoomId }, data: { currentProductId: currentProductForRoom(productIds, existing?.currentProductId) } })
+  })
+  const product = room.currentProductId ? await prisma.product.findUnique({ where: { id: room.currentProductId } }) : null
+  req.app.get('liveIo')?.to(liveRoomId).emit('live:current-product:update', { liveRoomId, product })
+  ok(res, true)
+})
+app.patch('/api/admin/live-rooms/:id/current-product', async (req, res) => {
+  const owner = await adminOwnerUser()
+  const liveRoomId = param(req, 'id')
+  const body = z.object({ productId: z.string() }).parse(req.body)
+  const existing = await prisma.liveRoom.findFirst({ where: { id: liveRoomId, anchorUserId: owner.id } })
+  if (!existing) return fail(res, '直播间不存在', 40401, 404)
+  const linked = await prisma.liveRoomProduct.findFirst({ where: { liveRoomId, productId: body.productId } })
+  if (!linked) return fail(res, '请先将商品绑定到直播间')
+  const room = await prisma.liveRoom.update({ where: { id: liveRoomId }, data: { currentProductId: body.productId } })
+  const product = await prisma.product.findUnique({ where: { id: body.productId } })
+  req.app.get('liveIo')?.to(liveRoomId).emit('live:current-product:update', { liveRoomId, product })
+  ok(res, room)
+})
+const marketingRuleSchema = z.object({
+  type: z.enum(['COUPON', 'DISCOUNT', 'FULL_REDUCTION', 'SECKILL']),
+  title: z.string().trim().min(1),
+  status: z.enum(['ACTIVE', 'INACTIVE']).default('ACTIVE'),
+  productId: z.string().optional().nullable(),
+  amount: z.number().int().nonnegative().optional().nullable(),
+  minAmount: z.number().int().nonnegative().optional().nullable(),
+  discountPercent: z.number().int().min(1).max(100).optional().nullable(),
+  countdownSeconds: z.number().int().positive().optional().nullable(),
+})
+
+app.get('/api/admin/live-rooms/:id/marketing-rules', async (req, res) => {
+  const owner = await adminOwnerUser()
+  const liveRoomId = param(req, 'id')
+  const existing = await prisma.liveRoom.findFirst({ where: { id: liveRoomId, anchorUserId: owner.id } })
+  if (!existing) return fail(res, '直播间不存在', 40401, 404)
+  ok(res, await marketingRulesForRoom(liveRoomId))
+})
+
+app.post('/api/admin/live-rooms/:id/marketing-rules', async (req, res) => {
+  const owner = await adminOwnerUser()
+  const liveRoomId = param(req, 'id')
+  const body = z.object({ rules: z.array(marketingRuleSchema).default([]) }).parse(req.body)
+  const existing = await prisma.liveRoom.findFirst({ where: { id: liveRoomId, anchorUserId: owner.id } })
+  if (!existing) return fail(res, '直播间不存在', 40401, 404)
+  await prisma.marketingRule.deleteMany({ where: { liveRoomId } })
+  if (body.rules.length) {
+    await prisma.marketingRule.createMany({
+      data: body.rules.map((rule) => ({
+        liveRoomId,
+        type: rule.type,
+        title: rule.title,
+        status: rule.status,
+        productId: rule.productId || null,
+        amount: rule.amount ?? null,
+        minAmount: rule.minAmount ?? null,
+        discountPercent: rule.discountPercent ?? null,
+        countdownSeconds: rule.countdownSeconds ?? null,
+        startsAt: null,
+        endsAt: null,
+      })),
+    })
+  }
+  const rules = await marketingRulesForRoom(liveRoomId)
+  req.app.get('liveIo')?.to(liveRoomId).emit('live:marketing:update', { liveRoomId, rules })
+  ok(res, rules)
+})
+
 app.post('/api/admin/live-rooms/:id/push-coupon', async (req, res) => {
-  const coupon = await prisma.coupon.findFirst({ where: { status: 'ACTIVE' } })
+  const coupon = await prisma.marketingRule.findFirst({ where: { liveRoomId: param(req, 'id'), type: 'COUPON', status: 'ACTIVE' }, orderBy: { createdAt: 'desc' } })
   req.app.get('liveIo')?.to(param(req, 'id')).emit('live:coupon:push', { liveRoomId: param(req, 'id'), coupon })
   ok(res, coupon)
 })

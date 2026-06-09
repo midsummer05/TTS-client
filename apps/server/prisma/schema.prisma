@@ -88,6 +88,7 @@ model VideoProduct {
 
 model LiveRoom {
   id               String         @id @default(cuid())
+  videoId          String?        @unique
   title            String
   coverUrl          String
   videoUrl          String?
@@ -104,6 +105,7 @@ model LiveRoom {
   anchor            User?          @relation(fields: [anchorUserId], references: [id])
   products          LiveRoomProduct[]
   comments          Comment[]
+  marketingRules    MarketingRule[]
 }
 
 model LiveRoomProduct {
@@ -197,4 +199,25 @@ model Coupon {
   status    String       @default("ACTIVE")
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
+}
+
+model MarketingRule {
+  id              String   @id @default(cuid())
+  liveRoomId      String
+  type            String
+  title           String
+  status          String   @default("ACTIVE")
+  productId       String?
+  amount          Int?
+  minAmount       Int?
+  discountPercent Int?
+  countdownSeconds Int?
+  startsAt        DateTime?
+  endsAt          DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  liveRoom        LiveRoom @relation(fields: [liveRoomId], references: [id])
+
+  @@index([liveRoomId, type, status])
 }

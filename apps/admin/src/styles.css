@@ -69,3 +69,184 @@ body {
   color: #667085;
   font-size: 13px;
 }
+
+.product-thumb,
+.product-preview,
+.live-preview {
+  object-fit: cover;
+  border-radius: 10px;
+  background: #f2f4f7;
+}
+
+.select-table-cell {
+  overflow: hidden;
+}
+
+.table-select {
+  width: 100%;
+}
+
+.table-select .ant-select-selector {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.table-select .ant-select-selection-overflow {
+  flex-wrap: nowrap;
+}
+
+.cell-ellipsis {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analytics-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.trend-chart {
+  min-height: 260px;
+}
+
+.trend-chart svg {
+  width: 100%;
+  height: 230px;
+}
+
+.chart-grid {
+  stroke: #edf0f5;
+  stroke-width: 1;
+}
+
+.chart-line {
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chart-line.plays {
+  stroke: #1677ff;
+}
+
+.chart-line.likes {
+  stroke: #52c41a;
+}
+
+.chart-line.comments {
+  stroke: #fa8c16;
+}
+
+.chart-label {
+  fill: #667085;
+  font-size: 12px;
+}
+
+.chart-legend {
+  display: flex;
+  gap: 18px;
+  color: #667085;
+  font-size: 13px;
+}
+
+.legend-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-right: 6px;
+  border-radius: 50%;
+}
+
+.legend-dot.plays {
+  background: #1677ff;
+}
+
+.legend-dot.likes {
+  background: #52c41a;
+}
+
+.legend-dot.comments {
+  background: #fa8c16;
+}
+
+.funnel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 10px 0;
+}
+
+.funnel-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr) 64px;
+  align-items: center;
+  gap: 10px;
+}
+
+.funnel-label,
+.funnel-rate {
+  color: #667085;
+  font-size: 13px;
+}
+
+.funnel-rate {
+  text-align: right;
+}
+
+.funnel-track {
+  height: 34px;
+  overflow: hidden;
+  border-radius: 17px;
+  background: #f2f4f7;
+}
+
+.funnel-bar {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 72px;
+  border-radius: 17px;
+  color: #fff;
+  font-weight: 800;
+  padding: 0 12px;
+  transition: width 0.2s ease;
+}
+
+.marketing-rule-card {
+  background: #fbfcff;
+}
+
+.marketing-rule-grid {
+  display: grid;
+  grid-template-columns: 120px minmax(180px, 1.2fr) 110px repeat(3, minmax(130px, 1fr)) 76px;
+  gap: 12px;
+  align-items: end;
+}
+
+.marketing-rule-grid .ant-form-item {
+  margin-bottom: 0;
+}
+
+@media (max-width: 1100px) {
+  .analytics-grid,
+  .metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .marketing-rule-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
