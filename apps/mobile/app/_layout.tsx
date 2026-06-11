@@ -3,6 +3,7 @@ import { Stack } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
 import { useState } from 'react'
 import { TestAutoLogin } from '@/components/TestAutoLogin'
+import { MiniLivePlayer } from '@/components/MiniLivePlayer'
 
 export default function RootLayout() {
   const [queryClient] = useState(() => new QueryClient())
@@ -25,6 +26,7 @@ export default function RootLayout() {
         <Stack.Screen name="product/[id]" />
         <Stack.Screen name="login" />
       </Stack>
+      <MiniLivePlayer />
     </QueryClientProvider>
   )
 }

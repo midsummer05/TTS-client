@@ -8,6 +8,7 @@ import { LoadingView } from '@/components/StateViews'
 import { useRequireLogin } from '@/hooks/useRequireLogin'
 import type { MarketingRule } from '@/types'
 import { formatPrice } from '@/utils/formatPrice'
+import { trackEvent } from '@/utils/trackEvent'
 
 function bestPercent(rules: MarketingRule[], productId: string) {
   const percents = rules
@@ -17,11 +18,12 @@ function bestPercent(rules: MarketingRule[], productId: string) {
 }
 
 export default function OrderConfirmScreen() {
-  const params = useLocalSearchParams<{ cartItemIds?: string; productId?: string; liveRoomId?: string }>()
+  const params = useLocalSearchParams<{ cartItemIds?: string; productId?: string; quantity?: string; liveRoomId?: string }>()
+  const buyQuantity = Math.max(1, Number(params.quantity || 1) || 1)
   const redirect = params.productId
-    ? `/order/confirm?productId=${params.productId}`
+    ? `/order/confirm?productId=${params.productId}&quantity=${buyQuantity}${params.liveRoomId ? `&liveRoomId=${params.liveRoomId}` : ''}`
     : params.cartItemIds
-      ? `/order/confirm?cartItemIds=${params.cartItemIds}`
+      ? `/order/confirm?cartItemIds=${params.cartItemIds}${params.liveRoomId ? `&liveRoomId=${params.liveRoomId}` : ''}`
       : '/order/confirm'
   const isLoggedIn = useRequireLogin(redirect, 'buy')
   const create = useMutation({ mutationFn: api.createOrder })
@@ -44,7 +46,7 @@ export default function OrderConfirmScreen() {
   const cartIds = params.cartItemIds?.split(',').filter(Boolean) || []
   const items = params.productId
     ? productQuery.data
-      ? [{ id: productQuery.data.id, title: productQuery.data.title, coverUrl: productQuery.data.coverUrl, price: productQuery.data.price, quantity: 1 }]
+      ? [{ id: productQuery.data.id, title: productQuery.data.title, coverUrl: productQuery.data.coverUrl, price: productQuery.data.price, quantity: buyQuantity }]
       : []
     : (cartQuery.data || [])
         .filter((item) => cartIds.includes(item.id))
@@ -66,9 +68,26 @@ export default function OrderConfirmScreen() {
     try {
       const order = await create.mutateAsync(
         params.productId
-          ? { source: 'buyNow', productId: params.productId, quantity: 1, address: '北京市朝阳区测试地址', liveRoomId: params.liveRoomId }
+          ? { source: 'buyNow', productId: params.productId, quantity: buyQuantity, address: '北京市朝阳区测试地址', liveRoomId: params.liveRoomId }
           : { source: 'cart', cartItemIds: params.cartItemIds?.split(',') || [], address: '北京市朝阳区测试地址', liveRoomId: params.liveRoomId },
       )
+      trackEvent({
+        eventType: 'order_create',
+        targetType: 'ORDER',
+        targetId: order.id,
+        liveRoomId: params.liveRoomId,
+        productId: items[0]?.id,
+        price: total,
+        quantity: items.reduce((sum, item) => sum + item.quantity, 0),
+        source: params.productId ? 'buy_now' : 'cart',
+        metadata: {
+          orderNo: order.orderNo,
+          productIds: items.map((item) => item.id),
+          totalAmount: total,
+          discountAmount: order.discountAmount,
+          payAmount: order.payAmount,
+        },
+      })
       router.replace({ pathname: '/order/result', params: { id: order.id } })
     } catch (error) {
       Alert.alert('下单失败', (error as Error).message)

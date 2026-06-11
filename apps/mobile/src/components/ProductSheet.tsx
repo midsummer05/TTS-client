@@ -9,8 +9,8 @@ type Props = {
   products?: Product[]
   visible: boolean
   onClose: () => void
-  onAddCart: (product: Product) => void
-  onBuyNow: (product: Product) => void
+  onAddCart: (product: Product, quantity: number) => void
+  onBuyNow: (product: Product, quantity: number) => void
 }
 
 export function ProductSheet({
@@ -22,10 +22,12 @@ export function ProductSheet({
   onBuyNow,
 }: Props) {
   const [selected, setSelected] = useState<Product | undefined>(product || products[0])
+  const [quantity, setQuantity] = useState(1)
 
   useEffect(() => {
     if (!visible) return
     setSelected(product || products[0])
+    setQuantity(1)
   }, [product?.id, products[0]?.id, visible])
 
   const list = products.length ? products : selected ? [selected] : []
@@ -66,7 +68,7 @@ export function ProductSheet({
                     {list.map((item) => (
                       <TouchableOpacity
                         key={item.id}
-                        onPress={() => setSelected(item)}
+                        onPress={() => { setSelected(item); setQuantity(1) }}
                         style={{
                           width: 116,
                           borderRadius: 10,
@@ -116,6 +118,18 @@ export function ProductSheet({
                 </Text>
               </View>
             </View>
+            <View style={{ marginTop: 18, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <Text style={{ color: '#111', fontWeight: '800' }}>购买数量</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 10, height: 38, borderRadius: 19, backgroundColor: '#f3f4f6' }}>
+                <TouchableOpacity onPress={() => setQuantity((value) => Math.max(1, value - 1))}>
+                  <Text style={{ width: 28, textAlign: 'center', fontSize: 22, color: quantity <= 1 ? '#bbb' : '#111' }}>-</Text>
+                </TouchableOpacity>
+                <Text style={{ minWidth: 24, textAlign: 'center', color: '#111', fontWeight: '800' }}>{quantity}</Text>
+                <TouchableOpacity onPress={() => setQuantity((value) => Math.min(selected.stock, value + 1))}>
+                  <Text style={{ width: 28, textAlign: 'center', fontSize: 22, color: quantity >= selected.stock ? '#bbb' : '#111' }}>+</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
             <Text style={{ marginTop: 18, lineHeight: 22, color: '#444' }}>
               {selected.description || '直播间精选商品，支持加购和立即购买。'}
             </Text>
@@ -141,7 +155,7 @@ export function ProductSheet({
             >
               <TouchableOpacity
                 disabled={selected.stock <= 0}
-                onPress={() => onAddCart(selected)}
+                onPress={() => onAddCart(selected, quantity)}
                 style={{
                   flex: 1,
                   height: 48,
@@ -157,7 +171,7 @@ export function ProductSheet({
               </TouchableOpacity>
               <TouchableOpacity
                 disabled={selected.stock <= 0}
-                onPress={() => onBuyNow(selected)}
+                onPress={() => onBuyNow(selected, quantity)}
                 style={{
                   flex: 1,
                   height: 48,

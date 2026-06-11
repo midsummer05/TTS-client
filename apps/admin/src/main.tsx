@@ -86,6 +86,13 @@ type MarketingRule = {
   countdownSeconds?: number | null
 }
 
+type AiContentDraft = {
+  videoTitles: string[]
+  sellingPoints: string[]
+  recommendation: string
+  liveScript: string
+}
+
 function price(value: number) {
   return `¥${(value / 100).toFixed(2)}`
 }
@@ -104,6 +111,32 @@ function liveStatusLabel(value: string) {
 
 function normalizeLiveStatus(value?: string) {
   return value === 'LIVING' ? 'LIVE' : value
+}
+
+function draftToText(draft: AiContentDraft) {
+  return [
+    '短视频标题',
+    ...draft.videoTitles.map((item, index) => `${index + 1}. ${item}`),
+    '',
+    '商品卖点',
+    ...draft.sellingPoints.map((item, index) => `${index + 1}. ${item}`),
+    '',
+    '商品推荐语',
+    draft.recommendation,
+    '',
+    '直播讲解文案',
+    draft.liveScript,
+  ].join('\n')
+}
+
+function downloadTextFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
 }
 
 function LoginScreen({ onLogin }: { onLogin: (payload: { token: string; user: User }) => void }) {
@@ -144,7 +177,6 @@ function Dashboard() {
       {[
         ['商品数', data?.productCount || 0],
         ['视频数', data?.videoCount || 0],
-        ['直播间', data?.liveRoomCount || 0],
         ['订单数', data?.orderCount || 0],
         ['GMV', price(data?.gmv || 0)],
       ].map(([label, value]) => (
@@ -439,6 +471,7 @@ function VideoList({ currentUser }: { currentUser: User }) {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Video | null>(null)
   const [marketingVideo, setMarketingVideo] = useState<Video | null>(null)
+  const [aiDraft, setAiDraft] = useState<AiContentDraft | null>(null)
   const [uploadedVideoName, setUploadedVideoName] = useState('')
   const [form] = Form.useForm()
   const [marketingForm] = Form.useForm()
@@ -486,7 +519,21 @@ function VideoList({ currentUser }: { currentUser: User }) {
     onError: (error) => message.error((error as Error).message),
   })
   const selectedProductIds = Form.useWatch('productIds', form) || []
+  const watchedTitle = Form.useWatch('title', form)
+  const watchedLiveTitle = Form.useWatch('liveTitle', form)
   const selectedProducts = products.filter((item) => selectedProductIds.includes(item.id))
+  const generateAiDraft = useMutation({
+    mutationFn: () => request.post('/admin/ai/content-draft', {
+      productIds: selectedProductIds,
+      videoTitle: watchedTitle,
+      liveTitle: watchedLiveTitle,
+    }) as Promise<AiContentDraft>,
+    onSuccess: (draft) => {
+      setAiDraft(draft)
+      message.success('AI 内容已生成')
+    },
+    onError: (error) => message.error((error as Error).message),
+  })
   const marketingRulesQuery = useQuery({
     queryKey: ['admin-marketing-rules', marketingVideo?.liveRoomId],
     queryFn: () => request.get(`/admin/live-rooms/${marketingVideo!.liveRoomId}/marketing-rules`) as Promise<MarketingRule[]>,
@@ -537,6 +584,14 @@ function VideoList({ currentUser }: { currentUser: User }) {
       currentProductId: video.liveRoom?.currentProductId || video.products[0]?.product.id,
     })
     setOpen(true)
+  }
+
+  function handleGenerateAiDraft() {
+    if (!selectedProductIds.length) {
+      message.warning('请先选择关联商品，AI 会根据商品信息生成内容')
+      return
+    }
+    generateAiDraft.mutate()
   }
 
   function openMarketing(video: Video) {
@@ -646,6 +701,12 @@ function VideoList({ currentUser }: { currentUser: User }) {
           <Form.Item name="productIds" label="关联商品">
             <Select mode="multiple" placeholder="选择要挂载到视频下方的商品" options={products.map((item) => ({ value: item.id, label: item.title }))} />
           </Form.Item>
+          <Form.Item label="AI 内容辅助">
+            <Space wrap>
+              <Button onClick={handleGenerateAiDraft} loading={generateAiDraft.isPending}>根据商品生成文案</Button>
+              <Typography.Text type="secondary">生成短视频标题、商品卖点、推荐语和直播讲解文案。</Typography.Text>
+            </Space>
+          </Form.Item>
           <Form.Item name="status" label="视频状态" rules={[{ required: true, message: '请选择视频状态' }]}>
             <Select options={[{ value: 'DRAFT', label: '草稿' }, { value: 'PUBLISHED', label: '已发布' }, { value: 'OFFLINE', label: '已下架' }]} />
           </Form.Item>
@@ -659,6 +720,38 @@ function VideoList({ currentUser }: { currentUser: User }) {
             <Select options={[{ value: 'NOT_STARTED', label: '未开始' }, { value: 'LIVE', label: '直播中' }, { value: 'ENDED', label: '已结束' }]} />
           </Form.Item>
         </Form>
+      </Modal>
+      <Modal
+        title="AI 生成内容"
+        open={!!aiDraft}
+        width={820}
+        onCancel={() => setAiDraft(null)}
+        footer={aiDraft ? [
+          <Button key="download" onClick={() => downloadTextFile(`AI内容方案-${new Date().toISOString().slice(0, 10)}.txt`, draftToText(aiDraft))}>下载到本地</Button>,
+          <Button key="title" onClick={() => aiDraft.videoTitles[0] && form.setFieldValue('title', aiDraft.videoTitles[0])}>使用第一个标题</Button>,
+          <Button key="close" type="primary" onClick={() => setAiDraft(null)}>完成</Button>,
+        ] : null}
+      >
+        {aiDraft ? (
+          <Space direction="vertical" size={14} style={{ width: '100%' }}>
+            <Card size="small" title="短视频标题">
+              <Space direction="vertical" style={{ width: '100%' }}>
+                {aiDraft.videoTitles.map((item, index) => <Typography.Text key={`${item}-${index}`}>{index + 1}. {item}</Typography.Text>)}
+              </Space>
+            </Card>
+            <Card size="small" title="商品卖点">
+              <Space direction="vertical" style={{ width: '100%' }}>
+                {aiDraft.sellingPoints.map((item, index) => <Typography.Text key={`${item}-${index}`}>{index + 1}. {item}</Typography.Text>)}
+              </Space>
+            </Card>
+            <Card size="small" title="商品推荐语">
+              <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>{aiDraft.recommendation}</Typography.Paragraph>
+            </Card>
+            <Card size="small" title="直播讲解文案">
+              <Typography.Paragraph style={{ marginBottom: 0, whiteSpace: 'pre-wrap' }}>{aiDraft.liveScript}</Typography.Paragraph>
+            </Card>
+          </Space>
+        ) : null}
       </Modal>
       <Modal
         title={marketingVideo ? `营销配置：${marketingVideo.title}` : '营销配置'}
@@ -953,6 +1046,7 @@ function App() {
     queryFn: () => request.get('/users/me') as Promise<User | null>,
     enabled: !!token,
     retry: false,
+    refetchInterval: 5000,
   })
 
   function handleLogin(payload: { token: string; user: User }) {

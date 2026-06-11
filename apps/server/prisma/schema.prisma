@@ -28,6 +28,7 @@ model User {
   liveRooms      LiveRoom[]
   products       Product[]     @relation("SellerProducts")
   interactions   Interaction[]
+  behaviorEvents BehaviorEvent[]
 }
 
 model Product {
@@ -65,6 +66,7 @@ model Video {
   playCount    Int         @default(0)
   likeCount    Int         @default(0)
   commentCount Int         @default(0)
+  shareCount   Int         @default(0)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
@@ -189,6 +191,31 @@ model Interaction {
 
   @@unique([userId, targetType, targetId, type])
   @@index([targetType, targetId, type])
+}
+
+model BehaviorEvent {
+  id         String   @id @default(cuid())
+  userId     String?
+  eventType  String
+  targetType String?
+  targetId   String?
+  videoId    String?
+  liveRoomId String?
+  productId  String?
+  source     String?
+  category   String?
+  price      Int?
+  quantity   Int?
+  metadata   String?
+  createdAt  DateTime @default(now())
+
+  user       User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId, eventType, createdAt])
+  @@index([eventType, targetType, targetId])
+  @@index([productId, createdAt])
+  @@index([videoId, createdAt])
+  @@index([liveRoomId, createdAt])
 }
 
 model Coupon {

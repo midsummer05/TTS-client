@@ -109,7 +109,7 @@ export function FeedActionSidebar({
   likeCount,
   commentCount,
   favoriteCount = 0,
-  shareCount = 686,
+  shareCount = 0,
   followed,
   liked,
   favorited,

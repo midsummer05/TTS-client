@@ -8,6 +8,7 @@ type UserState = {
   token: string
   user?: User
   setSession: (session: { token: string; user: User }) => void
+  updateUser: (user: User) => void
   clearSession: () => void
 }
 
@@ -39,6 +40,11 @@ export const useUserStore = create<UserState>((set) => ({
     writeStoredSession(session)
     set(session)
   },
+  updateUser: (user) => set((state) => {
+    if (!state.token) return { user }
+    writeStoredSession({ token: state.token, user })
+    return { user }
+  }),
   clearSession: () => {
     removeStoredSession()
     set({ token: '', user: undefined })

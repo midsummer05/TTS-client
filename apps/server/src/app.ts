@@ -10,6 +10,7 @@ import multer from 'multer'
 import { z } from 'zod'
 import { prisma } from './prisma.js'
 import { auth, type AuthedRequest } from './middlewares/auth.js'
+import { registerAiRoutes } from './ai/router.js'
 import { generateOrderNo } from './utils/order.js'
 import { fail, ok } from './utils/response.js'
 
@@ -71,11 +72,57 @@ function optionalUserId(req: express.Request) {
   }
 }
 
+function optionalUserIdFromHeader(req: express.Request) {
+  return optionalUserId(req)
+}
+
 function parseBody<T extends z.ZodTypeAny>(schema: T, body: unknown, res: express.Response): z.infer<T> | undefined {
   const result = schema.safeParse(body)
   if (result.success) return result.data
   fail(res, result.error.issues[0]?.message || '请求参数错误', 40000, 400)
 }
+
+const behaviorEventSchema = z.object({
+  eventType: z.string().min(1).max(60),
+  targetType: z.string().max(40).optional().nullable(),
+  targetId: z.string().max(120).optional().nullable(),
+  videoId: z.string().max(120).optional().nullable(),
+  liveRoomId: z.string().max(120).optional().nullable(),
+  productId: z.string().max(120).optional().nullable(),
+  source: z.string().max(80).optional().nullable(),
+  category: z.string().max(80).optional().nullable(),
+  price: z.number().int().nonnegative().optional().nullable(),
+  quantity: z.number().int().positive().optional().nullable(),
+  metadata: z.record(z.unknown()).optional().nullable(),
+})
+
+app.post('/api/events', async (req, res) => {
+  const body = parseBody(behaviorEventSchema, req.body, res)
+  if (!body) return
+  const product = body.productId
+    ? await prisma.product.findUnique({
+        where: { id: body.productId },
+        select: { category: true, price: true },
+      }).catch(() => null)
+    : null
+  const event = await prisma.behaviorEvent.create({
+    data: {
+      userId: optionalUserIdFromHeader(req),
+      eventType: body.eventType,
+      targetType: body.targetType || undefined,
+      targetId: body.targetId || undefined,
+      videoId: body.videoId || undefined,
+      liveRoomId: body.liveRoomId || undefined,
+      productId: body.productId || undefined,
+      source: body.source || undefined,
+      category: body.category || product?.category || undefined,
+      price: body.price ?? product?.price ?? undefined,
+      quantity: body.quantity || undefined,
+      metadata: body.metadata ? JSON.stringify(body.metadata) : undefined,
+    },
+  })
+  ok(res, { id: event.id })
+})
 
 type MarketingRuleInput = {
   type: string
@@ -284,7 +331,7 @@ app.post('/api/auth/mock-login', async (req, res) => {
   const username = body.username.replace(/\s+/g, '').toLowerCase() || 'test'
   const user = await prisma.user.upsert({
     where: { username },
-    update: { nickname: body.nickname },
+    update: {},
     create: {
       username,
       nickname: body.nickname,
@@ -300,6 +347,64 @@ app.post('/api/auth/mock-login', async (req, res) => {
 app.get('/api/users/me', auth, async (req: AuthedRequest, res) => {
   const user = await prisma.user.findUnique({ where: { id: req.userId } })
   ok(res, user ? publicUser(user) : null)
+})
+
+app.patch('/api/users/me', auth, async (req: AuthedRequest, res) => {
+  const body = z.object({
+    nickname: z.string().trim().min(2, '昵称至少需要 2 个字').max(20, '昵称不能超过 20 个字').optional(),
+    avatarUrl: z.string().trim().url('请输入正确的头像地址').or(z.literal('')).optional(),
+  }).parse(req.body)
+
+  const data: { nickname?: string; avatarUrl?: string | null } = {}
+  if (body.nickname !== undefined) data.nickname = body.nickname
+  if (body.avatarUrl !== undefined) data.avatarUrl = body.avatarUrl || null
+  if (!Object.keys(data).length) return fail(res, '没有可更新的资料')
+
+  const user = await prisma.$transaction(async (tx) => {
+    const updated = await tx.user.update({
+      where: { id: req.userId! },
+      data,
+    })
+    const syncData = {
+      ...(data.nickname ? { authorName: data.nickname } : {}),
+      ...(body.avatarUrl !== undefined ? { authorAvatar: data.avatarUrl } : {}),
+    }
+    if (Object.keys(syncData).length) {
+      await tx.video.updateMany({ where: { userId: req.userId }, data: syncData })
+    }
+    const liveSyncData = {
+      ...(data.nickname ? { anchorName: data.nickname } : {}),
+      ...(body.avatarUrl !== undefined ? { anchorAvatar: data.avatarUrl } : {}),
+    }
+    if (Object.keys(liveSyncData).length) {
+      await tx.liveRoom.updateMany({ where: { anchorUserId: req.userId }, data: liveSyncData })
+    }
+    return updated
+  })
+
+  ok(res, publicUser(user))
+})
+
+app.post('/api/users/me/avatar', auth, upload.single('file'), async (req: AuthedRequest, res) => {
+  if (!req.file) return fail(res, '请上传头像图片')
+  if (!req.file.mimetype.startsWith('image/')) return fail(res, '只能上传图片文件')
+  const result = await uploadToCos(req.file, 'TENCENT_COS_IMAGE_PREFIX')
+  const user = await prisma.$transaction(async (tx) => {
+    const updated = await tx.user.update({
+      where: { id: req.userId! },
+      data: { avatarUrl: result.url },
+    })
+    await tx.video.updateMany({
+      where: { userId: req.userId },
+      data: { authorAvatar: result.url },
+    })
+    await tx.liveRoom.updateMany({
+      where: { anchorUserId: req.userId },
+      data: { anchorAvatar: result.url },
+    })
+    return updated
+  })
+  ok(res, { user: publicUser(user), upload: result })
 })
 
 app.get('/api/messages', auth, async (req: AuthedRequest, res) => {
@@ -461,6 +566,15 @@ app.post('/api/videos/:id/like', async (req, res) => {
   const video = await prisma.video.update({
     where: { id: param(req, 'id') },
     data: { likeCount: { increment: 1 } },
+  })
+  ok(res, video)
+})
+
+app.post('/api/videos/:id/share', async (req, res) => {
+  const video = await prisma.video.update({
+    where: { id: param(req, 'id') },
+    data: { shareCount: { increment: 1 } },
+    select: { shareCount: true },
   })
   ok(res, video)
 })
@@ -750,6 +864,7 @@ app.post('/api/videos/:id/comments', auth, async (req: AuthedRequest, res) => {
 })
 
 app.use('/api/admin', auth)
+registerAiRoutes(app)
 
 async function adminOwnerUser() {
   return prisma.user.upsert({

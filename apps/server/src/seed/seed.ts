@@ -102,6 +102,7 @@ async function main() {
   await prisma.liveRoom.deleteMany()
   await prisma.coupon.deleteMany()
   await prisma.interaction.deleteMany()
+  await prisma.behaviorEvent.deleteMany()
   await prisma.product.deleteMany()
   await prisma.user.deleteMany()
 
@@ -167,6 +168,7 @@ async function main() {
           playCount: 1200 + index * 330,
           likeCount: 80 + index * 17,
           commentCount: 5,
+          shareCount: 28 + index * 9,
         },
       }),
     ),

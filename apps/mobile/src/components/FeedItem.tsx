@@ -11,11 +11,13 @@ import { useAuthPrompt } from '@/hooks/useAuthPrompt'
 import { useUserStore } from '@/store/userStore'
 import type { Product, VideoItem } from '@/types'
 import { formatPrice } from '@/utils/formatPrice'
+import { trackEvent } from '@/utils/trackEvent'
 
 export function FeedItem({
   item,
   active,
   feedPlaying = true,
+  preload = false,
   onProductPress,
   onCartPress,
   onLivePress,
@@ -23,6 +25,7 @@ export function FeedItem({
   item: VideoItem
   active: boolean
   feedPlaying?: boolean
+  preload?: boolean
   onProductPress: (product: Product) => void
   onCartPress: () => void
   onLivePress?: () => void
@@ -32,11 +35,14 @@ export function FeedItem({
   const requireLogin = useAuthPrompt('/feed')
   const { width: screenWidth, height: screenHeight } = useWindowDimensions()
   const videoRef = useRef<Video>(null)
+  const viewTrackedRef = useRef(false)
+  const progressTrackedRef = useRef<Set<number>>(new Set())
   const [followed, setFollowed] = useState(false)
   const [liked, setLiked] = useState(false)
   const [favorited, setFavorited] = useState(false)
   const [likeCount, setLikeCount] = useState(item.likeCount)
   const [favoriteCount, setFavoriteCount] = useState(item.favoriteCount || 0)
+  const [shareCount, setShareCount] = useState(item.shareCount || 0)
   const [commentsVisible, setCommentsVisible] = useState(false)
   const [shareVisible, setShareVisible] = useState(false)
   const [paused, setPaused] = useState(false)
@@ -62,9 +68,47 @@ export function FeedItem({
   useEffect(() => {
     setLikeCount(item.likeCount)
     setFavoriteCount(item.favoriteCount || 0)
+    setShareCount(item.shareCount || 0)
     setLiked(!!token && !!item.likedByMe)
     setFavorited(!!token && !!item.favoritedByMe)
-  }, [item.favoriteCount, item.favoritedByMe, item.id, item.likeCount, item.likedByMe, token])
+    viewTrackedRef.current = false
+    progressTrackedRef.current = new Set()
+  }, [item.favoriteCount, item.favoritedByMe, item.id, item.likeCount, item.likedByMe, item.shareCount, token])
+
+  useEffect(() => {
+    if (!active || viewTrackedRef.current) return
+    viewTrackedRef.current = true
+    trackEvent({
+      eventType: 'video_view',
+      targetType: 'VIDEO',
+      targetId: item.id,
+      videoId: item.id,
+      productId: product?.id,
+      category: product?.category,
+      price: product?.price,
+      source: 'feed',
+    })
+  }, [active, item.id, product?.category, product?.id, product?.price])
+
+  async function openShareSheet() {
+    setShareVisible(true)
+    try {
+      const result = await api.shareVideo(item.id)
+      setShareCount(result.shareCount)
+      trackEvent({
+        eventType: 'video_share',
+        targetType: 'VIDEO',
+        targetId: item.id,
+        videoId: item.id,
+        productId: product?.id,
+        category: product?.category,
+        price: product?.price,
+        source: 'feed',
+      })
+    } catch {
+      // Sharing UI can still open, but the counter only changes after the server persists it.
+    }
+  }
 
   async function togglePaused() {
     const next = !paused
@@ -77,7 +121,7 @@ export function FeedItem({
   const screenAspect = screenWidth / Math.max(screenHeight, 1)
   const videoWidth = screenAspect > videoAspect ? screenHeight * videoAspect : screenWidth
   const videoHeight = screenAspect > videoAspect ? screenHeight : screenWidth / videoAspect
-  const shouldRenderVideo = Platform.OS === 'web' || active
+  const shouldRenderVideo = Platform.OS === 'web' || active || preload
   const videoBoxStyle = {
     position: 'absolute' as const,
     left: (screenWidth - videoWidth) / 2,
@@ -99,10 +143,28 @@ export function FeedItem({
           isMuted={muted}
           isLooping
           resizeMode={ResizeMode.CONTAIN}
+          progressUpdateIntervalMillis={active ? 500 : 1500}
           onPlaybackStatusUpdate={(status) => {
             if (!status.isLoaded) return
             setPositionMillis(status.positionMillis || 0)
             setDurationMillis(status.durationMillis || 0)
+            if (!status.durationMillis) return
+            const percent = Math.floor(((status.positionMillis || 0) / status.durationMillis) * 100)
+            ;[25, 50, 75, 100].forEach((milestone) => {
+              if (percent < milestone || progressTrackedRef.current.has(milestone)) return
+              progressTrackedRef.current.add(milestone)
+              trackEvent({
+                eventType: 'video_play_progress',
+                targetType: 'VIDEO',
+                targetId: item.id,
+                videoId: item.id,
+                productId: product?.id,
+                category: product?.category,
+                price: product?.price,
+                source: 'feed',
+                metadata: { progress: milestone },
+              })
+            })
           }}
           onReadyForDisplay={(event) => {
             const natural = event?.naturalSize || (event as unknown as { nativeEvent?: { naturalSize?: { width?: number; height?: number } } })?.nativeEvent?.naturalSize
@@ -126,6 +188,7 @@ export function FeedItem({
         likeCount={likeCount}
         commentCount={item.commentCount}
         favoriteCount={favoriteCount}
+        shareCount={shareCount}
         followed={followed}
         liked={liked}
         favorited={favorited}
@@ -135,6 +198,18 @@ export function FeedItem({
           const result = await api.toggleVideoInteraction(item.id, 'LIKE')
           setLikeCount((value) => Math.max(0, value + (result.active ? 1 : -1)))
           setLiked(result.active)
+          if (result.active) {
+            trackEvent({
+              eventType: 'video_like',
+              targetType: 'VIDEO',
+              targetId: item.id,
+              videoId: item.id,
+              productId: product?.id,
+              category: product?.category,
+              price: product?.price,
+              source: 'feed',
+            })
+          }
         }}
         onCommentPress={() => {
           if (requireLogin('comment', '/feed')) setCommentsVisible(true)
@@ -144,8 +219,20 @@ export function FeedItem({
           const result = await api.toggleVideoInteraction(item.id, 'FAVORITE')
           setFavoriteCount((value) => Math.max(0, value + (result.active ? 1 : -1)))
           setFavorited(result.active)
+          if (result.active) {
+            trackEvent({
+              eventType: 'video_favorite',
+              targetType: 'VIDEO',
+              targetId: item.id,
+              videoId: item.id,
+              productId: product?.id,
+              category: product?.category,
+              price: product?.price,
+              source: 'feed',
+            })
+          }
         }}
-        onSharePress={() => setShareVisible(true)}
+        onSharePress={openShareSheet}
       />
       <View style={{ position: 'absolute', left: 16, right: 82, bottom: 78, gap: 10 }}>
         <View style={{ height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.28)', overflow: 'hidden' }}>
@@ -166,7 +253,22 @@ export function FeedItem({
         </TouchableOpacity>
         <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700', marginTop: 8 }}>{item.title}</Text>
         {product ? (
-          <TouchableOpacity onPress={() => onProductPress(product)} style={{ marginTop: 14, flexDirection: 'row', gap: 10, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.94)', borderRadius: 8, padding: 10 }}>
+          <TouchableOpacity
+            onPress={() => {
+              trackEvent({
+                eventType: 'product_click',
+                targetType: 'PRODUCT',
+                targetId: product.id,
+                videoId: item.id,
+                productId: product.id,
+                category: product.category,
+                price: product.price,
+                source: 'feed_card',
+              })
+              onProductPress(product)
+            }}
+            style={{ marginTop: 14, flexDirection: 'row', gap: 10, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.94)', borderRadius: 8, padding: 10 }}
+          >
             <Image source={{ uri: toMediaUrl(product.coverUrl) }} style={{ width: 52, height: 52, borderRadius: 6 }} />
             <View style={{ flex: 1 }}>
               <Text numberOfLines={1} style={{ color: '#111', fontWeight: '700' }}>{product.title}</Text>

@@ -35,6 +35,7 @@ export type VideoItem = {
   author?: User | null
   likeCount: number
   commentCount: number
+  shareCount: number
   favoriteCount?: number
   likedByMe?: boolean
   favoritedByMe?: boolean

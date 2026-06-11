@@ -1,7 +1,7 @@
 import { ResizeMode, Video } from 'expo-av'
 import { router, useLocalSearchParams } from 'expo-router'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Animated, Easing, Image, ImageBackground, Platform, ScrollView, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from 'react-native'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Alert, Animated, BackHandler, Easing, Image, ImageBackground, Platform, ScrollView, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { io } from 'socket.io-client'
@@ -12,8 +12,10 @@ import { ProductSheet } from '@/components/ProductSheet'
 import { ErrorState, LoadingView } from '@/components/StateViews'
 import { useAuthPrompt } from '@/hooks/useAuthPrompt'
 import { useUserStore } from '@/store/userStore'
+import { useMiniLiveStore } from '@/store/miniLiveStore'
 import type { Comment, MarketingRule, Product } from '@/types'
 import { formatPrice } from '@/utils/formatPrice'
+import { trackEvent } from '@/utils/trackEvent'
 
 function bestMarketingPercent(rules: MarketingRule[], productId: string) {
   const percents = rules
@@ -104,8 +106,11 @@ export default function LiveRoomScreen() {
   const [nowTick, setNowTick] = useState(Date.now())
   const { width: screenWidth, height: screenHeight } = useWindowDimensions()
   const user = useUserStore((state) => state.user)
+  const setMiniLiveRoom = useMiniLiveStore((state) => state.setRoom)
+  const clearMiniLiveRoom = useMiniLiveStore((state) => state.clearRoom)
   const requireLogin = useAuthPrompt(`/live/${id}`)
   const queryClient = useQueryClient()
+  const trackedRoomRef = useRef<string>()
   const roomQuery = useQuery({
     queryKey: ['live-room', id],
     queryFn: async () => {
@@ -120,9 +125,33 @@ export default function LiveRoomScreen() {
   const marketingQuery = useQuery({ queryKey: ['live-marketing', roomId], queryFn: () => api.liveMarketingRules(roomId!), enabled: !!roomId })
   const socket = useMemo(() => io(`${API_BASE_URL}/live`, { autoConnect: false }), [])
 
+  const exitLiveRoom = useCallback(() => {
+    const room = roomQuery.data
+    if (!room) {
+      router.back()
+      return
+    }
+    Alert.alert('退出直播间', '是否需要开启小窗播放该直播？', [
+      { text: '取消', style: 'cancel' },
+      {
+        text: '不开启',
+        style: 'destructive',
+        onPress: () => router.back(),
+      },
+      {
+        text: '开启小窗',
+        onPress: () => {
+          setMiniLiveRoom(room)
+          router.back()
+        },
+      },
+    ])
+  }, [roomQuery.data?.id, setMiniLiveRoom])
+
   useEffect(() => {
     const room = roomQuery.data
     if (!room) return
+    clearMiniLiveRoom()
     setOnlineCount(room.onlineCount)
     setHeat(room.heat)
     setCurrentProduct(room.products.find((item) => item.id === room.currentProductId) || room.products[0])
@@ -157,6 +186,23 @@ export default function LiveRoomScreen() {
   }, [roomQuery.data?.id, user?.id])
 
   useEffect(() => {
+    const room = roomQuery.data
+    if (!room || trackedRoomRef.current === room.id) return
+    trackedRoomRef.current = room.id
+    const product = room.products.find((item) => item.id === room.currentProductId) || room.products[0]
+    trackEvent({
+      eventType: 'live_enter',
+      targetType: 'LIVE_ROOM',
+      targetId: room.id,
+      liveRoomId: room.id,
+      productId: product?.id,
+      category: product?.category,
+      price: product?.price,
+      source: 'live_room',
+    })
+  }, [roomQuery.data?.id])
+
+  useEffect(() => {
     if (marketingQuery.data) setMarketingRules(marketingQuery.data)
   }, [marketingQuery.data])
 
@@ -164,6 +210,15 @@ export default function LiveRoomScreen() {
     const timer = setInterval(() => setNowTick(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [])
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      exitLiveRoom()
+      return true
+    })
+    return () => subscription.remove()
+  }, [exitLiveRoom])
 
   async function sendComment() {
     const text = content.trim()
@@ -203,7 +258,7 @@ export default function LiveRoomScreen() {
           <View style={{ flex: 1.28, backgroundColor: '#111', position: 'relative', overflow: 'hidden' }}>
             <Video source={{ uri: toMediaUrl(room.videoUrl || room.coverUrl) }} posterSource={{ uri: toMediaUrl(room.coverUrl) }} usePoster shouldPlay={!paused} isMuted={muted} isLooping resizeMode={ResizeMode.CONTAIN} style={{ position: 'absolute', inset: 0 }} />
             <View style={{ position: 'absolute', top: 14, left: 14, right: 14, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-              <TouchableOpacity onPress={() => router.back()} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.42)', alignItems: 'center', justifyContent: 'center' }}>
+              <TouchableOpacity onPress={exitLiveRoom} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(0,0,0,0.42)', alignItems: 'center', justifyContent: 'center' }}>
                 <Text style={{ color: '#fff', fontSize: 28 }}>‹</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => room.anchorUserId && router.push({ pathname: '/user/[id]', params: { id: room.anchorUserId } })} style={{ flexDirection: 'row', alignItems: 'center', gap: 8, padding: 6, paddingRight: 12, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.45)' }}>
@@ -228,7 +283,23 @@ export default function LiveRoomScreen() {
             ) : null}
 
             {currentProduct ? (
-              <TouchableOpacity onPress={() => { setSheetProduct(currentProduct); setSheetVisible(true) }} style={{ position: 'absolute', right: 18, bottom: 134, width: 188, borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}>
+              <TouchableOpacity
+                onPress={() => {
+                  trackEvent({
+                    eventType: 'product_click',
+                    targetType: 'PRODUCT',
+                    targetId: currentProduct.id,
+                    liveRoomId: room.id,
+                    productId: currentProduct.id,
+                    category: currentProduct.category,
+                    price: currentProduct.price,
+                    source: 'live_current_product',
+                  })
+                  setSheetProduct(currentProduct)
+                  setSheetVisible(true)
+                }}
+                style={{ position: 'absolute', right: 18, bottom: 188, width: 188, borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}
+              >
                 <View style={{ position: 'absolute', zIndex: 2, left: 8, top: 8, borderRadius: 4, backgroundColor: '#ff315f', paddingHorizontal: 8, paddingVertical: 4 }}>
                   <Text style={{ color: '#fff', fontWeight: '900' }}>{seckillRule ? `秒杀 ${formatCountdown(seckillLeft)}` : hasProductDiscount ? '限时折扣' : '讲解中'}</Text>
                 </View>
@@ -248,7 +319,21 @@ export default function LiveRoomScreen() {
             {couponRule || fullReductionRule ? (
               <View style={{ position: 'absolute', left: 14, right: 14, top: 86, gap: 8 }}>
                 {couponRule ? (
-                  <TouchableOpacity onPress={() => Alert.alert('领取成功', `${couponRule.title} 已领取，下单时自动抵扣`)} style={{ alignSelf: 'flex-start', borderRadius: 12, backgroundColor: 'rgba(255,49,95,0.9)', paddingHorizontal: 12, paddingVertical: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      trackEvent({
+                        eventType: 'coupon_claim',
+                        targetType: 'MARKETING_RULE',
+                        targetId: couponRule.id,
+                        liveRoomId: room.id,
+                        productId: couponRule.productId || currentProduct?.id,
+                        source: 'live_room',
+                        metadata: { amount: couponRule.amount, minAmount: couponRule.minAmount },
+                      })
+                      Alert.alert('领取成功', `${couponRule.title} 已领取，下单时自动抵扣`)
+                    }}
+                    style={{ alignSelf: 'flex-start', borderRadius: 12, backgroundColor: 'rgba(255,49,95,0.9)', paddingHorizontal: 12, paddingVertical: 8 }}
+                  >
                     <Text style={{ color: '#fff', fontWeight: '900' }}>{couponRule.title} · 满{formatPrice(couponRule.minAmount || 0)}减{formatPrice(couponRule.amount || 0)}  领取</Text>
                   </TouchableOpacity>
                 ) : null}
@@ -259,8 +344,43 @@ export default function LiveRoomScreen() {
                 ) : null}
               </View>
             ) : null}
-            <TouchableOpacity onPress={() => { setSheetProduct(currentProduct || room.products[0]); setSheetVisible(true) }} style={{ position: 'absolute', right: 18, bottom: 76, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 18, height: 48, alignItems: 'center', justifyContent: 'center' }}>
+            <TouchableOpacity
+              onPress={() => {
+                const product = currentProduct || room.products[0]
+                if (product) {
+                  trackEvent({
+                    eventType: 'product_list_open',
+                    targetType: 'LIVE_ROOM',
+                    targetId: room.id,
+                    liveRoomId: room.id,
+                    productId: product.id,
+                    category: product.category,
+                    price: product.price,
+                    source: 'live_room',
+                  })
+                }
+                setSheetProduct(product)
+                setSheetVisible(true)
+              }}
+              style={{ position: 'absolute', right: 18, bottom: 132, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.5)', paddingHorizontal: 18, height: 48, alignItems: 'center', justifyContent: 'center' }}
+            >
               <Text style={{ color: '#fff', fontWeight: '900' }}>全部商品 ›</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                if (!requireLogin('cart', `/live/${id}`)) return
+                trackEvent({
+                  eventType: 'cart_open',
+                  targetType: 'LIVE_ROOM',
+                  targetId: room.id,
+                  liveRoomId: room.id,
+                  source: 'live_room',
+                })
+                router.push({ pathname: '/cart', params: { liveRoomId: room.id, liveProductIds: room.products.map((item) => item.id).join(',') } })
+              }}
+              style={{ position: 'absolute', right: 18, bottom: 76, borderRadius: 24, backgroundColor: 'rgba(255,49,95,0.88)', paddingHorizontal: 18, height: 48, alignItems: 'center', justifyContent: 'center' }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '900' }}>购物车</Text>
             </TouchableOpacity>
             <View style={{ position: 'absolute', left: 14, bottom: isWeb ? 18 : 70, flexDirection: 'row', gap: 8 }}>
               <TouchableOpacity onPress={() => setPaused((value) => !value)} style={{ height: 38, paddingHorizontal: 13, borderRadius: 19, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}>
@@ -331,15 +451,37 @@ export default function LiveRoomScreen() {
           products={room.products}
           visible={sheetVisible}
           onClose={() => { setSheetVisible(false); setSheetProduct(undefined) }}
-          onAddCart={async (product) => {
+          onAddCart={async (product, quantity) => {
             if (!requireLogin('cart', `/live/${id}`)) return
-            await api.addCart(product.id)
+            await api.addCart(product.id, quantity)
+            trackEvent({
+              eventType: 'cart_add',
+              targetType: 'PRODUCT',
+              targetId: product.id,
+              liveRoomId: room.id,
+              productId: product.id,
+              category: product.category,
+              price: product.price,
+              quantity,
+              source: 'live_product_sheet',
+            })
             Alert.alert('已加入购物车')
           }}
-          onBuyNow={(product) => {
+          onBuyNow={(product, quantity) => {
             if (!requireLogin('buy', `/live/${id}`)) return
             setSheetVisible(false)
-            router.push({ pathname: '/order/confirm', params: { productId: product.id, liveRoomId: room.id } })
+            trackEvent({
+              eventType: 'buy_now_click',
+              targetType: 'PRODUCT',
+              targetId: product.id,
+              liveRoomId: room.id,
+              productId: product.id,
+              category: product.category,
+              price: product.price,
+              quantity,
+              source: 'live_product_sheet',
+            })
+            router.push({ pathname: '/order/confirm', params: { productId: product.id, quantity: String(quantity), liveRoomId: room.id } })
           }}
         />
       </SafeAreaView>

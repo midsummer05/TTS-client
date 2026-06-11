@@ -1,17 +1,33 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { router, useLocalSearchParams } from 'expo-router'
+import { useEffect } from 'react'
 import { Alert, Image, ScrollView, Text, TouchableOpacity, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { api } from '@/api'
 import { ErrorState, LoadingView } from '@/components/StateViews'
 import { useAuthPrompt } from '@/hooks/useAuthPrompt'
 import { formatPrice } from '@/utils/formatPrice'
+import { trackEvent } from '@/utils/trackEvent'
 
 export default function ProductDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const requireLogin = useAuthPrompt(`/product/${id}`)
   const query = useQuery({ queryKey: ['product', id], queryFn: () => api.product(id) })
   const addCart = useMutation({ mutationFn: (productId: string) => api.addCart(productId) })
+
+  useEffect(() => {
+    const product = query.data
+    if (!product) return
+    trackEvent({
+      eventType: 'product_view',
+      targetType: 'PRODUCT',
+      targetId: product.id,
+      productId: product.id,
+      category: product.category,
+      price: product.price,
+      source: 'product_detail',
+    })
+  }, [query.data?.id])
 
   if (query.isLoading) return <LoadingView />
   if (query.isError || !query.data) return <ErrorState message={(query.error as Error)?.message || '商品不存在'} onRetry={() => query.refetch()} />
@@ -33,13 +49,39 @@ export default function ProductDetailScreen() {
           onPress={async () => {
             if (!requireLogin('cart', `/product/${id}`)) return
             await addCart.mutateAsync(product.id)
+            trackEvent({
+              eventType: 'cart_add',
+              targetType: 'PRODUCT',
+              targetId: product.id,
+              productId: product.id,
+              category: product.category,
+              price: product.price,
+              quantity: 1,
+              source: 'product_detail',
+            })
             Alert.alert('已加入购物车')
           }}
           style={{ flex: 1, height: 48, borderRadius: 8, backgroundColor: '#ffb020', alignItems: 'center', justifyContent: 'center' }}
         >
           <Text style={{ color: '#111', fontWeight: '800' }}>加入购物车</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => requireLogin('buy', `/product/${id}`) && router.push({ pathname: '/order/confirm', params: { productId: product.id } })} style={{ flex: 1, height: 48, borderRadius: 8, backgroundColor: '#e43d33', alignItems: 'center', justifyContent: 'center' }}>
+        <TouchableOpacity
+          onPress={() => {
+            if (!requireLogin('buy', `/product/${id}`)) return
+            trackEvent({
+              eventType: 'buy_now_click',
+              targetType: 'PRODUCT',
+              targetId: product.id,
+              productId: product.id,
+              category: product.category,
+              price: product.price,
+              quantity: 1,
+              source: 'product_detail',
+            })
+            router.push({ pathname: '/order/confirm', params: { productId: product.id } })
+          }}
+          style={{ flex: 1, height: 48, borderRadius: 8, backgroundColor: '#e43d33', alignItems: 'center', justifyContent: 'center' }}
+        >
           <Text style={{ color: '#fff', fontWeight: '800' }}>立即购买</Text>
         </TouchableOpacity>
       </View>

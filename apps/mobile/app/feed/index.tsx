@@ -11,6 +11,7 @@ import { ProductSheet } from '@/components/ProductSheet'
 import { useAuthPrompt } from '@/hooks/useAuthPrompt'
 import { useUserStore } from '@/store/userStore'
 import type { Product, VideoItem } from '@/types'
+import { trackEvent } from '@/utils/trackEvent'
 
 const height = Dimensions.get('window').height
 
@@ -21,7 +22,7 @@ export default function FeedScreen() {
   const token = useUserStore((state) => state.token)
   const requireLogin = useAuthPrompt('/feed')
   const query = useQuery({ queryKey: ['videos', token ? 'authed' : 'guest'], queryFn: () => api.videos() })
-  const addCart = useMutation({ mutationFn: (productId: string) => api.addCart(productId) })
+  const addCart = useMutation({ mutationFn: ({ productId, quantity }: { productId: string; quantity: number }) => api.addCart(productId, quantity) })
 
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 70 })
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
@@ -35,15 +36,35 @@ export default function FeedScreen() {
     }, []),
   )
 
-  async function handleAddCart(product: Product) {
+  async function handleAddCart(product: Product, quantity: number) {
     if (!requireLogin('cart', '/feed')) return
-    await addCart.mutateAsync(product.id)
+    await addCart.mutateAsync({ productId: product.id, quantity })
+    trackEvent({
+      eventType: 'cart_add',
+      targetType: 'PRODUCT',
+      targetId: product.id,
+      productId: product.id,
+      category: product.category,
+      price: product.price,
+      quantity,
+      source: 'feed_product_sheet',
+    })
     Alert.alert('已加入购物车')
   }
 
-  async function handleBuyNow(product: Product) {
+  async function handleBuyNow(product: Product, quantity: number) {
     if (!requireLogin('buy', '/feed')) return
-    router.push({ pathname: '/order/confirm', params: { productId: product.id } })
+    trackEvent({
+      eventType: 'buy_now_click',
+      targetType: 'PRODUCT',
+      targetId: product.id,
+      productId: product.id,
+      category: product.category,
+      price: product.price,
+      quantity,
+      source: 'feed_product_sheet',
+    })
+    router.push({ pathname: '/order/confirm', params: { productId: product.id, quantity: String(quantity) } })
   }
 
   if (query.isLoading) return <LoadingView />
@@ -59,9 +80,20 @@ export default function FeedScreen() {
     return item.liveRoomId
   }
 
-  function openLiveRoom(id: string) {
+  function openLiveRoom(id: string, item: VideoItem) {
     setFeedPlaying(false)
     setSelectedProduct(undefined)
+    trackEvent({
+      eventType: 'live_enter',
+      targetType: 'LIVE_ROOM',
+      targetId: id,
+      videoId: item.id,
+      liveRoomId: id,
+      productId: item.products[0]?.id,
+      category: item.products[0]?.category,
+      price: item.products[0]?.price,
+      source: 'feed',
+    })
     router.push({ pathname: '/live/[id]', params: { id } })
   }
 
@@ -81,9 +113,10 @@ export default function FeedScreen() {
               item={item}
               active={feedPlaying && index === activeIndex}
               feedPlaying={feedPlaying}
+              preload={feedPlaying && index === activeIndex + 1}
               onProductPress={setSelectedProduct}
               onCartPress={() => router.push('/cart')}
-              onLivePress={liveRoomIdFor(item) ? () => openLiveRoom(liveRoomIdFor(item)!) : undefined}
+              onLivePress={liveRoomIdFor(item) ? () => openLiveRoom(liveRoomIdFor(item)!, item) : undefined}
             />
           ))}
         </ScrollView>
@@ -107,9 +140,10 @@ export default function FeedScreen() {
               item={item}
               active={feedPlaying && index === activeIndex}
               feedPlaying={feedPlaying}
+              preload={feedPlaying && index === activeIndex + 1}
               onProductPress={setSelectedProduct}
               onCartPress={() => router.push('/cart')}
-              onLivePress={liveRoomIdFor(item) ? () => openLiveRoom(liveRoomIdFor(item)!) : undefined}
+              onLivePress={liveRoomIdFor(item) ? () => openLiveRoom(liveRoomIdFor(item)!, item) : undefined}
             />
           )}
         />
