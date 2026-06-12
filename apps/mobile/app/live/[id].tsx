@@ -1,7 +1,7 @@
 import { ResizeMode, Video } from 'expo-av'
-import { router, useLocalSearchParams } from 'expo-router'
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Animated, BackHandler, Easing, Image, ImageBackground, Platform, ScrollView, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from 'react-native'
+import { Alert, Animated, BackHandler, Easing, Image, ImageBackground, PanResponder, Platform, ScrollView, Text, TextInput, TouchableOpacity, View, useWindowDimensions } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { io } from 'socket.io-client'
@@ -47,6 +47,15 @@ function formatCountdown(value: number | null) {
   const minutes = Math.floor(value / 60).toString().padStart(2, '0')
   const seconds = Math.floor(value % 60).toString().padStart(2, '0')
   return `${minutes}:${seconds}`
+}
+
+const PRODUCT_CARD_WIDTH = 156
+const PRODUCT_CARD_HEIGHT = 188
+const PRODUCT_CARD_RIGHT = 16
+const PRODUCT_CARD_BOTTOM = 188
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max)
 }
 
 function DanmakuItem({ comment, index, screenWidth, laneCount, topOffset }: { comment: Comment; index: number; screenWidth: number; laneCount: number; topOffset: number }) {
@@ -111,6 +120,9 @@ export default function LiveRoomScreen() {
   const requireLogin = useAuthPrompt(`/live/${id}`)
   const queryClient = useQueryClient()
   const trackedRoomRef = useRef<string>()
+  const productCardPan = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current
+  const productCardOffsetRef = useRef({ x: 0, y: 0 })
+  const productCardDraggedRef = useRef(false)
   const roomQuery = useQuery({
     queryKey: ['live-room', id],
     queryFn: async () => {
@@ -124,6 +136,38 @@ export default function LiveRoomScreen() {
   const audienceQuery = useQuery({ queryKey: ['live-audience', roomId], queryFn: () => api.liveAudience(roomId!), enabled: !!roomId })
   const marketingQuery = useQuery({ queryKey: ['live-marketing', roomId], queryFn: () => api.liveMarketingRules(roomId!), enabled: !!roomId })
   const socket = useMemo(() => io(`${API_BASE_URL}/live`, { autoConnect: false }), [])
+  const productCardPanResponder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 4 || Math.abs(gesture.dy) > 4,
+    onPanResponderGrant: () => {
+      productCardDraggedRef.current = false
+      productCardPan.setOffset(productCardOffsetRef.current)
+      productCardPan.setValue({ x: 0, y: 0 })
+    },
+    onPanResponderMove: (_, gesture) => {
+      productCardDraggedRef.current = true
+      productCardPan.setValue({ x: gesture.dx, y: gesture.dy })
+    },
+    onPanResponderRelease: (_, gesture) => {
+      const baseLeft = screenWidth - PRODUCT_CARD_RIGHT - PRODUCT_CARD_WIDTH
+      const baseTop = screenHeight - PRODUCT_CARD_BOTTOM - PRODUCT_CARD_HEIGHT
+      const next = {
+        x: clamp(productCardOffsetRef.current.x + gesture.dx, -baseLeft + 8, 8),
+        y: clamp(productCardOffsetRef.current.y + gesture.dy, -baseTop + 88, PRODUCT_CARD_BOTTOM - 86),
+      }
+      productCardOffsetRef.current = next
+      productCardPan.setOffset({ x: 0, y: 0 })
+      productCardPan.setValue(next)
+      setTimeout(() => {
+        productCardDraggedRef.current = false
+      }, 80)
+    },
+    onPanResponderTerminate: () => {
+      productCardPan.setOffset({ x: 0, y: 0 })
+      productCardPan.setValue(productCardOffsetRef.current)
+      productCardDraggedRef.current = false
+    },
+  }), [productCardPan, screenHeight, screenWidth])
 
   const exitLiveRoom = useCallback(() => {
     const room = roomQuery.data
@@ -211,14 +255,14 @@ export default function LiveRoomScreen() {
     return () => clearInterval(timer)
   }, [])
 
-  useEffect(() => {
+  useFocusEffect(useCallback(() => {
     if (Platform.OS === 'web') return
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
       exitLiveRoom()
       return true
     })
     return () => subscription.remove()
-  }, [exitLiveRoom])
+  }, [exitLiveRoom]))
 
   async function sendComment() {
     const text = content.trim()
@@ -283,38 +327,51 @@ export default function LiveRoomScreen() {
             ) : null}
 
             {currentProduct ? (
-              <TouchableOpacity
-                onPress={() => {
-                  trackEvent({
-                    eventType: 'product_click',
-                    targetType: 'PRODUCT',
-                    targetId: currentProduct.id,
-                    liveRoomId: room.id,
-                    productId: currentProduct.id,
-                    category: currentProduct.category,
-                    price: currentProduct.price,
-                    source: 'live_current_product',
-                  })
-                  setSheetProduct(currentProduct)
-                  setSheetVisible(true)
+              <Animated.View
+                {...productCardPanResponder.panHandlers}
+                style={{
+                  position: 'absolute',
+                  right: PRODUCT_CARD_RIGHT,
+                  bottom: PRODUCT_CARD_BOTTOM,
+                  width: PRODUCT_CARD_WIDTH,
+                  transform: productCardPan.getTranslateTransform(),
                 }}
-                style={{ position: 'absolute', right: 18, bottom: 188, width: 188, borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}
               >
-                <View style={{ position: 'absolute', zIndex: 2, left: 8, top: 8, borderRadius: 4, backgroundColor: '#ff315f', paddingHorizontal: 8, paddingVertical: 4 }}>
-                  <Text style={{ color: '#fff', fontWeight: '900' }}>{seckillRule ? `秒杀 ${formatCountdown(seckillLeft)}` : hasProductDiscount ? '限时折扣' : '讲解中'}</Text>
-                </View>
-                <Image source={{ uri: toMediaUrl(currentProduct.coverUrl) }} style={{ width: '100%', height: 150 }} resizeMode="cover" />
-                <View style={{ padding: 10 }}>
-                  <Text numberOfLines={2} style={{ color: '#17171b', fontWeight: '800' }}>{currentProduct.title}</Text>
-                  <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <View>
-                      <Text style={{ color: '#ff315f', fontSize: 20, fontWeight: '900' }}>{formatPrice(productPrice)}</Text>
-                      {hasProductDiscount ? <Text style={{ color: '#999', textDecorationLine: 'line-through', fontSize: 12 }}>{formatPrice(currentProduct.price)}</Text> : null}
-                    </View>
-                    <Text style={{ color: '#fff', backgroundColor: '#ff315f', borderRadius: 4, paddingHorizontal: 9, paddingVertical: 5, fontWeight: '900' }}>抢</Text>
+                <TouchableOpacity
+                  activeOpacity={0.92}
+                  onPress={() => {
+                    if (productCardDraggedRef.current) return
+                    trackEvent({
+                      eventType: 'product_click',
+                      targetType: 'PRODUCT',
+                      targetId: currentProduct.id,
+                      liveRoomId: room.id,
+                      productId: currentProduct.id,
+                      category: currentProduct.category,
+                      price: currentProduct.price,
+                      source: 'live_current_product',
+                    })
+                    setSheetProduct(currentProduct)
+                    setSheetVisible(true)
+                  }}
+                  style={{ borderRadius: 8, backgroundColor: '#fff', overflow: 'hidden' }}
+                >
+                  <View style={{ position: 'absolute', zIndex: 2, left: 8, top: 8, borderRadius: 4, backgroundColor: '#ff315f', paddingHorizontal: 8, paddingVertical: 4 }}>
+                    <Text style={{ color: '#fff', fontWeight: '900' }}>{seckillRule ? `秒杀 ${formatCountdown(seckillLeft)}` : hasProductDiscount ? '限时折扣' : '讲解中'}</Text>
                   </View>
-                </View>
-              </TouchableOpacity>
+                  <Image source={{ uri: toMediaUrl(currentProduct.coverUrl) }} style={{ width: '100%', height: 112 }} resizeMode="cover" />
+                  <View style={{ padding: 8 }}>
+                    <Text numberOfLines={2} style={{ color: '#17171b', fontWeight: '800', fontSize: 13 }}>{currentProduct.title}</Text>
+                    <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <View>
+                        <Text style={{ color: '#ff315f', fontSize: 17, fontWeight: '900' }}>{formatPrice(productPrice)}</Text>
+                        {hasProductDiscount ? <Text style={{ color: '#999', textDecorationLine: 'line-through', fontSize: 12 }}>{formatPrice(currentProduct.price)}</Text> : null}
+                      </View>
+                      <Text style={{ color: '#fff', backgroundColor: '#ff315f', borderRadius: 4, paddingHorizontal: 8, paddingVertical: 4, fontWeight: '900' }}>抢</Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              </Animated.View>
             ) : null}
             {couponRule || fullReductionRule ? (
               <View style={{ position: 'absolute', left: 14, right: 14, top: 86, gap: 8 }}>
@@ -395,7 +452,16 @@ export default function LiveRoomScreen() {
             </View>
             {!isWeb ? (
               <>
-                <ScrollView style={{ position: 'absolute', left: 14, right: 132, bottom: 116, maxHeight: 172 }} contentContainerStyle={{ gap: 8, justifyContent: 'flex-end' }} showsVerticalScrollIndicator={false}>
+                <ScrollView
+                  bounces
+                  decelerationRate="fast"
+                  nestedScrollEnabled
+                  overScrollMode="always"
+                  scrollEventThrottle={16}
+                  style={{ position: 'absolute', left: 14, right: 132, bottom: 116, maxHeight: 172 }}
+                  contentContainerStyle={{ gap: 8, justifyContent: 'flex-end' }}
+                  showsVerticalScrollIndicator={false}
+                >
                   {(recentComments.length ? comments : []).map((comment, index) => (
                     <View key={`${comment.id}-overlay-${index}`} style={{ alignSelf: 'flex-start', maxWidth: '100%', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.42)' }}>
                       <Text numberOfLines={2} style={{ color: '#fff', lineHeight: 19 }}>
@@ -430,7 +496,16 @@ export default function LiveRoomScreen() {
             <View style={{ backgroundColor: '#303040', borderRadius: 8, padding: 12, marginBottom: 12 }}>
               <Text style={{ color: '#ffc142', lineHeight: 20 }}>在直播中以不当方式诱导消费，请谨慎辨别。切勿私下交易，以防人身财产损失。</Text>
             </View>
-            <ScrollView style={{ maxHeight: 210 }} contentContainerStyle={{ gap: 12 }} showsVerticalScrollIndicator={comments.length > 5}>
+            <ScrollView
+              bounces
+              decelerationRate="fast"
+              nestedScrollEnabled
+              overScrollMode="always"
+              scrollEventThrottle={16}
+              style={{ maxHeight: 210 }}
+              contentContainerStyle={{ gap: 12 }}
+              showsVerticalScrollIndicator={comments.length > 5}
+            >
               {comments.map((comment, index) => (
                 <View key={`${comment.id}-${index}`} style={{ flexDirection: 'row', gap: 8 }}>
                   <Text style={{ color: '#7da6ff', fontWeight: '800' }}>{comment.user.nickname}：</Text>

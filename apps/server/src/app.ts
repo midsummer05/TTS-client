@@ -616,6 +616,123 @@ app.get('/api/videos/:id/products', async (req, res) => {
   ok(res, links.map((item) => item.product))
 })
 
+const recommendationWeights: Record<string, number> = {
+  order_create: 16,
+  checkout_start: 12,
+  cart_add: 10,
+  cart_update: 8,
+  buy_now_click: 8,
+  product_click: 7,
+  product_view: 6,
+  product_list_open: 4,
+  video_favorite: 5,
+  video_like: 4,
+  video_share: 3,
+  live_enter: 3,
+  video_view: 2,
+}
+
+app.get('/api/recommendations/products', auth, async (req: AuthedRequest, res) => {
+  const userId = req.userId!
+  const [events, cartItems] = await Promise.all([
+    prisma.behaviorEvent.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 240,
+    }),
+    prisma.cartItem.findMany({ where: { userId }, select: { productId: true } }),
+  ])
+  const cartProductIds = cartItems.map((item) => item.productId)
+  const productScores = new Map<string, number>()
+  const categoryScores = new Map<string, number>()
+  const videoScores = new Map<string, number>()
+  const liveRoomScores = new Map<string, number>()
+  let weightedPriceTotal = 0
+  let priceWeightTotal = 0
+
+  const addScore = (map: Map<string, number>, key: string | null | undefined, value: number) => {
+    if (!key || value <= 0) return
+    map.set(key, (map.get(key) || 0) + value)
+  }
+  const addPriceSignal = (price: number | null | undefined, weight: number) => {
+    if (!price || price <= 0 || weight <= 0) return
+    weightedPriceTotal += price * weight
+    priceWeightTotal += weight
+  }
+
+  for (const event of events) {
+    const baseWeight = recommendationWeights[event.eventType] || 1
+    const quantityBoost = Math.min(event.quantity || 1, 5)
+    const weight = baseWeight * quantityBoost
+    addScore(productScores, event.productId, weight)
+    addScore(categoryScores, event.category, weight)
+    addScore(videoScores, event.videoId, weight * 0.6)
+    addScore(liveRoomScores, event.liveRoomId, weight * 0.6)
+    addPriceSignal(event.price, weight)
+  }
+
+  const directProductIds = [...productScores.keys()]
+  if (directProductIds.length) {
+    const products = await prisma.product.findMany({ where: { id: { in: directProductIds } } })
+    for (const product of products) {
+      const weight = productScores.get(product.id) || 0
+      addScore(categoryScores, product.category, weight * 0.5)
+      addPriceSignal(product.price, weight * 0.5)
+    }
+  }
+
+  if (videoScores.size) {
+    const links = await prisma.videoProduct.findMany({
+      where: { videoId: { in: [...videoScores.keys()] } },
+      include: { product: true },
+    })
+    for (const link of links) {
+      const weight = (videoScores.get(link.videoId) || 0) / (link.sort + 1)
+      addScore(productScores, link.productId, weight)
+      addScore(categoryScores, link.product.category, weight * 0.4)
+      addPriceSignal(link.product.price, weight * 0.4)
+    }
+  }
+
+  if (liveRoomScores.size) {
+    const links = await prisma.liveRoomProduct.findMany({
+      where: { liveRoomId: { in: [...liveRoomScores.keys()] } },
+      include: { product: true },
+    })
+    for (const link of links) {
+      const weight = (liveRoomScores.get(link.liveRoomId) || 0) / (link.sort + 1)
+      addScore(productScores, link.productId, weight)
+      addScore(categoryScores, link.product.category, weight * 0.4)
+      addPriceSignal(link.product.price, weight * 0.4)
+    }
+  }
+
+  const candidates = await prisma.product.findMany({
+    where: {
+      status: 'ON_SALE',
+      stock: { gt: 0 },
+      id: cartProductIds.length ? { notIn: cartProductIds } : undefined,
+    },
+    take: 80,
+    orderBy: [{ sales: 'desc' }, { createdAt: 'desc' }],
+  })
+  const averagePrice = priceWeightTotal > 0 ? weightedPriceTotal / priceWeightTotal : 0
+  const items = candidates
+    .map((product) => {
+      const directScore = productScores.get(product.id) || 0
+      const categoryScore = product.category ? (categoryScores.get(product.category) || 0) * 0.35 : 0
+      const priceScore = averagePrice
+        ? Math.max(0, 6 - (Math.abs(product.price - averagePrice) / Math.max(averagePrice, 1)) * 6)
+        : 0
+      const popularityScore = Math.log10(product.sales + 1) * 1.5
+      return { product, score: directScore + categoryScore + priceScore + popularityScore }
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10)
+    .map((item) => item.product)
+  ok(res, items)
+})
+
 app.get('/api/products', async (req, res) => {
   const page = Number(req.query.page || 1)
   const pageSize = Number(req.query.pageSize || 20)

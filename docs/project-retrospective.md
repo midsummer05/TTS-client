@@ -172,7 +172,69 @@ docs/       项目文档
 - 数据模型和接口协同调整成本低。
 - 适合快速迭代 MVP。
 
-### 3.2 三端职责划分
+### 3.2 整体项目架构图
+
+项目整体采用“移动端 + 运营后台 + 服务端 + 数据库 + 云服务”的架构。移动端和运营端不直接操作数据库，也不直接持有腾讯云 COS 密钥，而是通过服务端统一完成鉴权、业务校验、文件上传、实时同步和数据持久化。
+
+```mermaid
+flowchart TB
+  subgraph Client["用户侧"]
+    Mobile["移动端 App / Web\nExpo + React Native"]
+  end
+
+  subgraph Admin["商家侧"]
+    AdminWeb["运营后台\nReact + Vite + Ant Design"]
+  end
+
+  subgraph Server["服务端"]
+    Express["Express REST API"]
+    Auth["JWT 鉴权"]
+    Upload["Multer 文件上传"]
+    Socket["Socket.IO 实时通信"]
+    AI["AI 内容生成服务\n千问 OpenAI Compatible API"]
+    Recommend["埋点与商品推荐"]
+    OrderCalc["订单与营销计算"]
+  end
+
+  subgraph Storage["数据与云服务"]
+    SQLite["SQLite 数据库\nPrisma ORM"]
+    COS["腾讯云 COS\n视频 / 图片 / 头像"]
+  end
+
+  Mobile -->|"REST API / Axios"| Express
+  AdminWeb -->|"REST API / Axios"| Express
+  Mobile <-->|"直播间评论 / 当前讲解商品 / 营销规则"| Socket
+  AdminWeb -->|"营销配置 / 当前讲解商品"| Socket
+
+  Express --> Auth
+  Express --> Upload
+  Express --> Recommend
+  Express --> OrderCalc
+  Express --> AI
+  Express --> SQLite
+  Upload --> COS
+  AI -->|"生成标题 / 卖点 / 推荐语 / 讲解文案"| AdminWeb
+  COS -->|"HTTPS 资源地址"| Mobile
+  COS -->|"HTTPS 资源地址"| AdminWeb
+```
+
+从业务流转角度看，项目的核心闭环如下：
+
+```mermaid
+flowchart LR
+  A["运营端上传商品和视频"] --> B["服务端保存结构化数据"]
+  A --> C["媒体文件上传腾讯云 COS"]
+  B --> D["移动端 Feed 展示视频"]
+  C --> D
+  D --> E["用户进入直播间"]
+  E --> F["查看讲解商品 / 全部商品"]
+  F --> G["领取优惠 / 加购 / 下单"]
+  G --> H["订单和行为数据持久化"]
+  H --> I["运营分析与猜你喜欢推荐"]
+  I --> D
+```
+
+### 3.3 三端职责划分
 
 移动端负责用户侧消费体验：
 
@@ -202,7 +264,7 @@ docs/       项目文档
 
 这种划分保证了用户端和运营端使用同一套后端数据，不会出现“两套系统各玩各的”的问题。
 
-### 3.3 内容与直播间合并设计
+### 3.4 内容与直播间合并设计
 
 项目中途对业务逻辑做过一次关键调整：上传的视频都可以当作直播素材，因此内容管理和直播间配置不再拆成完全独立的两套模块。
 
@@ -219,7 +281,7 @@ docs/       项目文档
 - 避免运营后台重复配置同一个素材。
 - 保持用户看到的视频内容与直播间内容一致。
 
-### 3.4 商品绑定设计
+### 3.5 商品绑定设计
 
 商品既可以绑定到短视频，也可以绑定到直播间：
 
@@ -234,7 +296,7 @@ docs/       项目文档
 - 当前讲解商品浮层展示 `currentProductId` 对应商品。
 - 运营端修改当前讲解商品后，通过 Socket.IO 同步到客户端。
 
-### 3.5 营销规则设计
+### 3.6 营销规则设计
 
 营销玩法统一抽象为 `MarketingRule`：
 
@@ -257,7 +319,7 @@ countdownSeconds: 秒杀倒计时
 
 这样可以支持“折扣后再满减”的常见电商逻辑。
 
-### 3.6 行为埋点设计
+### 3.7 行为埋点设计
 
 为了后续智能推荐，项目新增轻量埋点表 `BehaviorEvent`。
 
@@ -295,6 +357,263 @@ countdownSeconds: 秒杀倒计时
 - 元数据。
 
 这为后续“猜你喜欢”推荐提供了数据基础。
+
+### 3.8 数据库设计
+
+项目数据库使用 Prisma + SQLite。SQLite 适合当前开发测试阶段，具备轻量、无需单独部署、便于本地调试的优势；Prisma 负责数据模型定义、类型生成和数据库访问。后续如果进入生产环境，可以平滑迁移到 MySQL 或 PostgreSQL。
+
+数据库设计围绕“用户、内容、商品、直播间、交易、互动、营销、埋点”展开。
+
+```mermaid
+erDiagram
+  User ||--o{ Product : sells
+  User ||--o{ Video : authors
+  User ||--o{ LiveRoom : anchors
+  User ||--o{ CartItem : owns
+  User ||--o{ Order : places
+  User ||--o{ Comment : writes
+  User ||--o{ Interaction : creates
+  User ||--o{ BehaviorEvent : tracks
+
+  Video ||--o{ VideoProduct : binds
+  Product ||--o{ VideoProduct : appears_in
+
+  LiveRoom ||--o{ LiveRoomProduct : binds
+  Product ||--o{ LiveRoomProduct : appears_in
+  Video ||--o| LiveRoom : maps_to
+
+  Product ||--o{ CartItem : added_to
+  Order ||--o{ OrderItem : contains
+  Product ||--o{ OrderItem : purchased_as_snapshot
+
+  Video ||--o{ Comment : has
+  LiveRoom ||--o{ Comment : has
+  LiveRoom ||--o{ MarketingRule : owns
+  LiveRoom ||--o{ BehaviorEvent : tracked_by
+  Video ||--o{ BehaviorEvent : tracked_by
+  Product ||--o{ BehaviorEvent : tracked_by
+```
+
+核心数据表设计如下：
+
+| 模型 | 作用 | 关键字段 |
+| --- | --- | --- |
+| `User` | 用户与商家账号，移动端和运营端共用 | `username`、`phone`、`nickname`、`avatarUrl`、`passwordHash` |
+| `Product` | 商品基础信息 | `title`、`coverUrl`、`price`、`stock`、`sales`、`status`、`category`、`sellerId` |
+| `Video` | 短视频内容，同时可作为模拟直播素材 | `title`、`coverUrl`、`videoUrl`、`authorName`、`status`、`playCount`、`likeCount`、`commentCount`、`shareCount` |
+| `LiveRoom` | 模拟直播间配置 | `videoId`、`title`、`coverUrl`、`videoUrl`、`anchorName`、`currentProductId`、`status` |
+| `VideoProduct` | 视频与商品多对多关系 | `videoId`、`productId`、`sort` |
+| `LiveRoomProduct` | 直播间与商品多对多关系 | `liveRoomId`、`productId`、`sort` |
+| `CartItem` | 用户购物车 | `userId`、`productId`、`quantity`、`selected` |
+| `Order` | 订单主表 | `orderNo`、`userId`、`status`、`totalAmount`、`discountAmount`、`payAmount`、`liveRoomId` |
+| `OrderItem` | 订单商品快照 | `orderId`、`productId`、`title`、`coverUrl`、`price`、`quantity` |
+| `Comment` | 视频和直播间评论 | `content`、`userId`、`videoId`、`liveRoomId` |
+| `Interaction` | 点赞、收藏等互动关系 | `userId`、`targetType`、`targetId`、`type` |
+| `BehaviorEvent` | 行为埋点事件 | `userId`、`eventType`、`videoId`、`liveRoomId`、`productId`、`category`、`price`、`metadata` |
+| `MarketingRule` | 直播间营销规则 | `liveRoomId`、`type`、`status`、`productId`、`amount`、`minAmount`、`discountPercent`、`countdownSeconds` |
+| `Coupon` | 优惠券基础模型，当前主要作为扩展预留 | `title`、`amount`、`minAmount`、`status` |
+
+数据库设计中的几个重点：
+
+- **账号统一**：移动端用户和运营端商家复用 `User`，运营后台根据当前登录用户过滤商品、视频和直播间数据。
+- **内容与直播间关联**：`Video` 保存内容素材，`LiveRoom.videoId` 关联视频，使“上传视频即可作为模拟直播间”成为可能。
+- **商品多对多绑定**：通过 `VideoProduct` 和 `LiveRoomProduct` 分别维护内容商品和直播间商品，避免在单表中塞数组字段。
+- **订单快照**：`OrderItem` 保存下单时的商品标题、封面和价格，避免后续商品改价影响历史订单。
+- **互动去重**：`Interaction` 使用用户、目标类型、目标 ID、互动类型的唯一约束，保证同一用户对同一目标只能有一个点赞或收藏状态。
+- **埋点可扩展**：`BehaviorEvent` 保留 `metadata` 字段，用于存储播放进度、来源上下文、推荐位等非固定结构信息。
+
+### 3.9 后端 API 设计
+
+后端采用 Express 提供 REST API，所有业务数据统一通过 `/api` 前缀访问。接口返回结构统一为：
+
+```ts
+type ApiResponse<T> = {
+  code: number
+  message: string
+  data: T
+}
+```
+
+服务端 API 设计遵循以下原则：
+
+- **统一鉴权**：需要用户身份的接口使用 JWT 鉴权中间件，例如购物车、订单、用户资料、评论发布。
+- **公共读取与登录行为分离**：视频列表、商品详情、直播间详情可以公开访问；点赞、收藏、加购、下单必须登录。
+- **运营端通过 `/api/admin` 分组**：商品管理、内容管理、直播间配置、营销配置、上传能力集中在后台 API 下。
+- **文件不直传云端**：前端将文件上传到服务端，服务端再上传腾讯云 COS，避免密钥泄露。
+- **实时能力不挤进 REST**：评论广播、当前讲解商品、营销规则同步等通过 Socket.IO 推送，REST 只负责数据落库和查询。
+
+后端 API 模块划分如下：
+
+| 模块 | 代表接口 | 说明 |
+| --- | --- | --- |
+| 健康检查与媒体代理 | `GET /api/health`、`GET /api/media-proxy` | 检查服务状态，兼容媒体资源访问 |
+| 用户认证 | `POST /api/auth/register`、`POST /api/auth/login`、`POST /api/auth/mock-login` | 注册、登录、测试身份登录 |
+| 用户资料 | `GET /api/users/me`、`PATCH /api/users/me`、`POST /api/users/me/avatar`、`GET /api/users/:id` | 个人资料、头像上传、用户主页 |
+| 消息中心 | `GET /api/messages` | 汇总评论、订单、互动消息 |
+| 视频内容 | `GET /api/videos`、`GET /api/videos/:id`、`POST /api/videos/:id/share`、`POST /api/videos/:id/interactions/:type` | Feed 视频、详情、转发、点赞收藏 |
+| 视频商品与评论 | `GET /api/videos/:id/products`、`GET /api/videos/:id/comments`、`POST /api/videos/:id/comments` | 视频关联商品和评论 |
+| 商品 | `GET /api/products`、`GET /api/products/:id`、`POST /api/products/:id/interactions/:type` | 商品列表、详情、商品互动 |
+| 智能推荐 | `GET /api/recommendations/products` | 根据埋点、类目、价格区间和销量生成购物车猜你喜欢 |
+| 购物车 | `GET /api/cart`、`POST /api/cart`、`PATCH /api/cart/:cartItemId`、`PATCH /api/cart/:cartItemId/selected`、`DELETE /api/cart/:cartItemId` | 加购、数量调整、选中、删除 |
+| 订单 | `POST /api/orders`、`GET /api/orders`、`GET /api/orders/:id`、`POST /api/orders/:id/pay`、`POST /api/orders/:id/cancel` | 下单、订单列表、支付模拟、取消 |
+| 直播间 | `GET /api/live-rooms`、`GET /api/live-rooms/:id`、`GET /api/live-rooms/:id/products`、`GET /api/live-rooms/:id/comments`、`POST /api/live-rooms/:id/comments` | 直播间信息、商品、评论 |
+| 直播营销 | `GET /api/live-rooms/:id/marketing-rules` | 客户端读取直播间营销规则 |
+| 行为埋点 | `POST /api/events` | 记录浏览、点击、加购、下单等行为 |
+| 运营概览 | `GET /api/admin/dashboard/overview` | 后台首页数据概览 |
+| 运营商品 | `GET /api/admin/products`、`POST /api/admin/products`、`PATCH /api/admin/products/:id`、`PATCH /api/admin/products/:id/status` | 商品列表、新增、编辑、上下架 |
+| 运营内容 | `GET /api/admin/videos`、`POST /api/admin/videos`、`PATCH /api/admin/videos/:id`、`PATCH /api/admin/videos/:id/status`、`POST /api/admin/videos/:id/products` | 视频上传、编辑、状态、商品绑定 |
+| 运营直播间 | `GET /api/admin/live-rooms`、`POST /api/admin/live-rooms`、`PATCH /api/admin/live-rooms/:id`、`POST /api/admin/live-rooms/:id/products`、`PATCH /api/admin/live-rooms/:id/current-product` | 直播间配置、商品绑定、当前讲解商品 |
+| 运营营销 | `GET /api/admin/live-rooms/:id/marketing-rules`、`POST /api/admin/live-rooms/:id/marketing-rules`、`POST /api/admin/live-rooms/:id/push-coupon` | 营销规则配置与优惠券推送 |
+| 文件上传 | `POST /api/admin/upload/image`、`POST /api/admin/upload/video` | 商品图、直播封面、视频文件上传 COS |
+| AIGC | `/api/ai/*` | 内容生成、商品卖点、推荐语、直播讲解文案 |
+
+典型业务 API 流程如下：
+
+```mermaid
+sequenceDiagram
+  participant M as 移动端
+  participant S as Express API
+  participant DB as SQLite/Prisma
+  participant IO as Socket.IO
+
+  M->>S: POST /api/live-rooms/:id/comments
+  S->>S: JWT 鉴权 + 参数校验
+  S->>DB: 写入 Comment
+  S->>DB: 更新直播间热度/评论数据
+  S->>IO: 广播 live:comment:new
+  IO-->>M: 评论实时同步为评论流/弹幕
+  S-->>M: 返回创建后的评论
+```
+
+```mermaid
+sequenceDiagram
+  participant A as 运营后台
+  participant S as Express API
+  participant DB as SQLite/Prisma
+  participant IO as Socket.IO
+  participant M as 移动端直播间
+
+  A->>S: PATCH /api/admin/live-rooms/:id/current-product
+  S->>DB: 校验商品是否已绑定直播间
+  S->>DB: 更新 currentProductId
+  S->>IO: 广播 live:current-product:update
+  IO-->>M: 更新当前讲解商品浮层
+  S-->>A: 返回最新直播间配置
+```
+
+```mermaid
+sequenceDiagram
+  participant M as 移动端
+  participant S as Express API
+  participant DB as SQLite/Prisma
+
+  M->>S: POST /api/orders
+  S->>S: JWT 鉴权
+  S->>DB: 查询商品、购物车、直播间营销规则
+  S->>S: 计算折扣、秒杀价、满减、优惠券
+  S->>DB: 创建 Order / OrderItem
+  S->>DB: 扣减库存、增加销量、清理购物车
+  S-->>M: 返回订单、优惠金额、应付金额
+```
+
+### 3.10 直播间实时通信设计
+
+直播间实时通信使用 Socket.IO 实现。项目中将“数据保存”和“实时推送”做了明确分工：
+
+- REST API 负责业务校验、数据落库和返回结果。
+- Socket.IO 负责把直播间内的状态变化实时推送给正在观看的客户端。
+
+整体通信模型如下：
+
+```mermaid
+flowchart TB
+  Admin["运营后台"]
+  Mobile["移动端直播间"]
+  API["Express REST API"]
+  DB["SQLite / Prisma"]
+  Socket["Socket.IO /live namespace"]
+  Room["直播间 Room\nliveRoomId"]
+
+  Mobile -->|"POST 评论 / 加购 / 下单"| API
+  Admin -->|"PATCH 当前讲解商品\nPOST 营销规则"| API
+  API -->|"写入评论、营销规则、当前讲解商品"| DB
+  API -->|"业务变更后 emit"| Socket
+  Mobile -->|"live:join / live:leave"| Socket
+  Socket --> Room
+  Room -->|"live:comment:new"| Mobile
+  Room -->|"live:current-product:update"| Mobile
+  Room -->|"live:marketing:update"| Mobile
+  Room -->|"live:coupon:push"| Mobile
+  Room -->|"live:online:update"| Mobile
+```
+
+实时通信的关键场景如下：
+
+| 场景 | 触发端 | REST/API 或 Socket 入口 | 服务端处理 | 客户端实时响应 |
+| --- | --- | --- | --- | --- |
+| 进入直播间 | 移动端 | `live:join` | 将用户加入对应直播间 room，更新在线人数和热度 | 收到 `live:online:update` 后刷新在线人数和人气 |
+| 离开直播间 | 移动端 | `live:leave` | 从直播间 room 移除用户，更新在线人数 | 其他客户端收到新的在线人数 |
+| 发送直播评论 | 移动端 | `POST /api/live-rooms/:id/comments` | JWT 鉴权，写入 `Comment`，广播 `live:comment:new` | 评论列表新增评论，同时同步为弹幕 |
+| 切换当前讲解商品 | 运营端 | `PATCH /api/admin/live-rooms/:id/current-product` | 校验商品已绑定直播间，更新 `currentProductId`，广播 `live:current-product:update` | 直播间商品浮层立即切换 |
+| 保存营销规则 | 运营端 | `POST /api/admin/live-rooms/:id/marketing-rules` | 写入 `MarketingRule`，广播 `live:marketing:update` | 优惠券、折扣、满减、秒杀倒计时实时刷新 |
+| 推送优惠券 | 运营端 | `POST /api/admin/live-rooms/:id/push-coupon` | 找到直播间优惠券并广播 `live:coupon:push` | 客户端展示可领取优惠券 |
+
+移动端直播间初始化时会连接 `/live` 命名空间，并加入当前直播间：
+
+```ts
+socket.connect()
+socket.emit('live:join', {
+  liveRoomId: room.id,
+  userId: user?.id || 'guest',
+})
+```
+
+随后监听服务端推送的实时事件：
+
+```ts
+socket.on('live:comment:new', (comment) => {
+  // 写入评论列表，并用于弹幕展示
+})
+
+socket.on('live:current-product:update', ({ product }) => {
+  // 更新当前讲解商品浮层
+})
+
+socket.on('live:marketing:update', ({ rules }) => {
+  // 更新优惠券、折扣、满减、秒杀等营销规则
+})
+
+socket.on('live:coupon:push', ({ coupon }) => {
+  // 展示新推送的优惠券
+})
+
+socket.on('live:online:update', ({ onlineCount, heat }) => {
+  // 更新在线人数和热度
+})
+```
+
+离开直播间时会主动发送离开事件，并释放监听，避免重复订阅和内存泄漏：
+
+```ts
+socket.emit('live:leave', {
+  liveRoomId: room.id,
+  userId: user?.id || 'guest',
+})
+
+socket.off('live:comment:new')
+socket.off('live:current-product:update')
+socket.off('live:marketing:update')
+socket.off('live:coupon:push')
+socket.off('live:online:update')
+socket.disconnect()
+```
+
+这个设计带来的好处是：
+
+- **一致性更好**：所有关键数据先通过 REST API 写入数据库，再通过 Socket.IO 广播，避免只改前端状态但没有持久化。
+- **实时性足够**：评论、弹幕、当前讲解商品和营销规则可以在直播间内即时更新。
+- **职责清晰**：REST API 负责“这件事能不能做、数据怎么存”，Socket.IO 负责“把变化告诉正在看直播的人”。
+- **扩展方便**：后续可以继续增加点赞飘屏、成交提醒、库存变化、主播开播状态等实时事件。
 
 ## 4. 技术难点与解决方案
 

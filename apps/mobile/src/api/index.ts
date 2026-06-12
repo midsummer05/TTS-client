@@ -25,6 +25,7 @@ export const api = {
   messages: () => request.get('/messages') as Promise<MessageItem[]>,
   videos: (page = 1) => request.get('/videos', { params: { page, pageSize: 10 } }) as Promise<{ items: VideoItem[]; total: number }>,
   product: (id: string) => request.get(`/products/${id}`) as Promise<Product>,
+  recommendedProducts: () => request.get('/recommendations/products') as Promise<Product[]>,
   toggleVideoInteraction: (id: string, type: 'LIKE' | 'FAVORITE') => request.post(`/videos/${id}/interactions/${type}`) as Promise<{ active: boolean }>,
   shareVideo: (id: string) => request.post(`/videos/${id}/share`) as Promise<{ shareCount: number }>,
   toggleProductInteraction: (id: string, type: 'LIKE' | 'FAVORITE') => request.post(`/products/${id}/interactions/${type}`) as Promise<{ active: boolean }>,

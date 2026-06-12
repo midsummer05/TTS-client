@@ -43,6 +43,7 @@ export function FeedItem({
   const [likeCount, setLikeCount] = useState(item.likeCount)
   const [favoriteCount, setFavoriteCount] = useState(item.favoriteCount || 0)
   const [shareCount, setShareCount] = useState(item.shareCount || 0)
+  const [commentCount, setCommentCount] = useState(item.commentCount)
   const [commentsVisible, setCommentsVisible] = useState(false)
   const [shareVisible, setShareVisible] = useState(false)
   const [paused, setPaused] = useState(false)
@@ -69,11 +70,12 @@ export function FeedItem({
     setLikeCount(item.likeCount)
     setFavoriteCount(item.favoriteCount || 0)
     setShareCount(item.shareCount || 0)
+    setCommentCount(item.commentCount)
     setLiked(!!token && !!item.likedByMe)
     setFavorited(!!token && !!item.favoritedByMe)
     viewTrackedRef.current = false
     progressTrackedRef.current = new Set()
-  }, [item.favoriteCount, item.favoritedByMe, item.id, item.likeCount, item.likedByMe, item.shareCount, token])
+  }, [item.commentCount, item.favoriteCount, item.favoritedByMe, item.id, item.likeCount, item.likedByMe, item.shareCount, token])
 
   useEffect(() => {
     if (!active || viewTrackedRef.current) return
@@ -186,7 +188,7 @@ export function FeedItem({
         avatarUrl={item.authorAvatar}
         authorName={item.authorName}
         likeCount={likeCount}
-        commentCount={item.commentCount}
+        commentCount={commentCount}
         favoriteCount={favoriteCount}
         shareCount={shareCount}
         followed={followed}
@@ -285,7 +287,7 @@ export function FeedItem({
           <Text style={{ color: '#111', fontWeight: '800' }}>购物车</Text>
         </TouchableOpacity>
       </View>
-      <CommentSheet visible={commentsVisible} count={item.commentCount} videoId={item.id} onClose={() => setCommentsVisible(false)} />
+      <CommentSheet visible={commentsVisible} count={commentCount} videoId={item.id} onClose={() => setCommentsVisible(false)} onCommentSent={() => setCommentCount((value) => value + 1)} />
       <ShareSheet visible={shareVisible} onClose={() => setShareVisible(false)} />
     </View>
   )

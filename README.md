@@ -20,7 +20,7 @@ cp apps/server/.env.example apps/server/.env
 
 ```env
 DATABASE_URL="file:./dev.db"
-JWT_SECRET="dev-secret"
+JWT_SECRET="change-me-in-local-env"
 PORT=4000
 
 TENCENT_SECRET_ID=""
@@ -28,6 +28,7 @@ TENCENT_SECRET_KEY=""
 TENCENT_COS_BUCKET="tts-1441040031"
 TENCENT_COS_REGION="ap-guangzhou"
 TENCENT_COS_PREFIX="直播素材/后台上传/"
+AI_API_KEY=""
 ```
 
 仓库中只提交脱敏后的 `apps/server/.env.example`。`.gitignore` 已忽略 `apps/**/.env`，避免误提交真实密钥。
